@@ -1,0 +1,177 @@
+{
+  "source": "github.com/stripe/openapi spec3.json + spec3.sdk.json: 2024-06-20 = tag v1267, 2026-08-26.dahlia = tag v2442",
+  "versions": {
+    "2024-06-20": {
+      "customer": {
+        "required": ["created", "default_source", "description", "email", "id", "livemode", "object", "shipping"],
+        "optional": ["address", "balance", "currency", "delinquent", "discount", "invoice_prefix", "invoice_settings", "metadata", "name", "next_invoice_sequence", "phone", "preferred_locales", "tax_exempt", "test_clock"],
+        "includable": ["cash_balance", "invoice_credit_balance", "sources", "subscriptions", "tax", "tax_ids"],
+        "nullable": ["address", "cash_balance", "currency", "default_source", "delinquent", "description", "discount", "email", "invoice_prefix", "name", "phone", "preferred_locales", "shipping", "tax_exempt", "test_clock"]
+      },
+      "product": {
+        "required": ["active", "created", "description", "id", "images", "livemode", "marketing_features", "metadata", "name", "object", "package_dimensions", "shippable", "tax_code", "type", "updated", "url"],
+        "optional": ["default_price", "statement_descriptor", "unit_label"],
+        "includable": [],
+        "nullable": ["default_price", "description", "package_dimensions", "shippable", "statement_descriptor", "tax_code", "unit_label", "url"]
+      },
+      "price": {
+        "required": ["active", "billing_scheme", "created", "currency", "custom_unit_amount", "id", "livemode", "lookup_key", "metadata", "nickname", "object", "product", "recurring", "tax_behavior", "tiers_mode", "transform_quantity", "type", "unit_amount", "unit_amount_decimal"],
+        "optional": [],
+        "includable": ["currency_options", "tiers"],
+        "nullable": ["custom_unit_amount", "lookup_key", "nickname", "recurring", "tax_behavior", "tiers_mode", "transform_quantity", "unit_amount", "unit_amount_decimal"]
+      },
+      "payment_method": {
+        "required": ["billing_details", "created", "customer", "id", "livemode", "metadata", "object", "type"],
+        "optional": ["acss_debit", "affirm", "afterpay_clearpay", "alipay", "allow_redisplay", "amazon_pay", "au_becs_debit", "bacs_debit", "bancontact", "blik", "boleto", "card", "card_present", "cashapp", "customer_balance", "eps", "fpx", "giropay", "grabpay", "ideal", "interac_present", "klarna", "konbini", "link", "mobilepay", "multibanco", "oxxo", "p24", "paynow", "paypal", "pix", "promptpay", "radar_options", "revolut_pay", "sepa_debit", "sofort", "swish", "twint", "us_bank_account", "wechat_pay", "zip"],
+        "includable": [],
+        "nullable": ["customer", "metadata"]
+      },
+      "checkout.session": {
+        "required": ["after_expiration", "allow_promotion_codes", "amount_subtotal", "amount_total", "automatic_tax", "billing_address_collection", "cancel_url", "client_reference_id", "client_secret", "consent", "consent_collection", "created", "currency", "currency_conversion", "custom_fields", "custom_text", "customer", "customer_creation", "customer_details", "customer_email", "expires_at", "id", "invoice", "invoice_creation", "livemode", "locale", "metadata", "mode", "object", "payment_intent", "payment_link", "payment_method_collection", "payment_method_configuration_details", "payment_method_options", "payment_method_types", "payment_status", "recovered_from", "saved_payment_method_options", "setup_intent", "shipping_address_collection", "shipping_cost", "shipping_details", "shipping_options", "status", "submit_type", "subscription", "success_url", "total_details", "ui_mode", "url"],
+        "optional": ["phone_number_collection", "redirect_on_completion", "return_url", "tax_id_collection"],
+        "includable": ["line_items"],
+        "nullable": ["after_expiration", "allow_promotion_codes", "amount_subtotal", "amount_total", "billing_address_collection", "cancel_url", "client_reference_id", "client_secret", "consent", "consent_collection", "currency", "currency_conversion", "customer", "customer_creation", "customer_details", "customer_email", "invoice", "invoice_creation", "locale", "metadata", "payment_intent", "payment_link", "payment_method_collection", "payment_method_configuration_details", "payment_method_options", "recovered_from", "saved_payment_method_options", "setup_intent", "shipping_address_collection", "shipping_cost", "shipping_details", "status", "submit_type", "subscription", "success_url", "total_details", "ui_mode", "url"]
+      },
+      "subscription": {
+        "required": ["application", "application_fee_percent", "automatic_tax", "billing_cycle_anchor", "billing_cycle_anchor_config", "billing_thresholds", "cancel_at", "cancel_at_period_end", "canceled_at", "cancellation_details", "collection_method", "created", "currency", "current_period_end", "current_period_start", "customer", "days_until_due", "default_payment_method", "default_source", "description", "discount", "discounts", "ended_at", "id", "invoice_settings", "items", "latest_invoice", "livemode", "metadata", "next_pending_invoice_item_invoice", "object", "on_behalf_of", "pause_collection", "payment_settings", "pending_invoice_item_interval", "pending_setup_intent", "pending_update", "schedule", "start_date", "status", "test_clock", "transfer_data", "trial_end", "trial_settings", "trial_start"],
+        "optional": ["default_tax_rates"],
+        "includable": [],
+        "nullable": ["application", "application_fee_percent", "billing_cycle_anchor_config", "billing_thresholds", "cancel_at", "canceled_at", "cancellation_details", "days_until_due", "default_payment_method", "default_source", "default_tax_rates", "description", "discount", "ended_at", "latest_invoice", "next_pending_invoice_item_invoice", "on_behalf_of", "pause_collection", "payment_settings", "pending_invoice_item_interval", "pending_setup_intent", "pending_update", "schedule", "test_clock", "transfer_data", "trial_end", "trial_settings", "trial_start"]
+      },
+      "subscription_item": {
+        "required": ["billing_thresholds", "created", "discounts", "id", "metadata", "object", "plan", "price", "subscription", "tax_rates"],
+        "optional": ["quantity"],
+        "includable": [],
+        "nullable": ["billing_thresholds", "tax_rates"]
+      },
+      "subscription_schedule": {
+        "required": ["application", "canceled_at", "completed_at", "created", "current_phase", "customer", "default_settings", "end_behavior", "id", "livemode", "metadata", "object", "phases", "released_at", "released_subscription", "status", "subscription", "test_clock"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["application", "canceled_at", "completed_at", "current_phase", "metadata", "released_at", "released_subscription", "subscription", "test_clock"]
+      },
+      "invoice": {
+        "required": ["account_country", "account_name", "account_tax_ids", "amount_due", "amount_paid", "amount_remaining", "amount_shipping", "application", "application_fee_amount", "attempt_count", "attempted", "automatic_tax", "automatically_finalizes_at", "billing_reason", "charge", "collection_method", "created", "currency", "custom_fields", "customer", "customer_address", "customer_email", "customer_name", "customer_phone", "customer_shipping", "customer_tax_exempt", "default_payment_method", "default_source", "default_tax_rates", "description", "discount", "discounts", "due_date", "effective_at", "ending_balance", "footer", "from_invoice", "issuer", "last_finalization_error", "latest_revision", "lines", "livemode", "metadata", "next_payment_attempt", "number", "object", "on_behalf_of", "paid", "paid_out_of_band", "payment_intent", "payment_settings", "period_end", "period_start", "post_payment_credit_notes_amount", "pre_payment_credit_notes_amount", "quote", "receipt_number", "rendering", "shipping_cost", "shipping_details", "starting_balance", "statement_descriptor", "status", "status_transitions", "subscription", "subscription_details", "subtotal", "subtotal_excluding_tax", "tax", "test_clock", "total", "total_discount_amounts", "total_excluding_tax", "total_tax_amounts", "transfer_data", "webhooks_delivered_at"],
+        "optional": ["auto_advance", "customer_tax_ids", "hosted_invoice_url", "id", "invoice_pdf", "subscription_proration_date", "threshold_reason"],
+        "includable": [],
+        "nullable": ["account_country", "account_name", "account_tax_ids", "application", "application_fee_amount", "automatically_finalizes_at", "billing_reason", "charge", "custom_fields", "customer", "customer_address", "customer_email", "customer_name", "customer_phone", "customer_shipping", "customer_tax_exempt", "customer_tax_ids", "default_payment_method", "default_source", "description", "discount", "due_date", "effective_at", "ending_balance", "footer", "from_invoice", "hosted_invoice_url", "invoice_pdf", "last_finalization_error", "latest_revision", "metadata", "next_payment_attempt", "number", "on_behalf_of", "payment_intent", "quote", "receipt_number", "rendering", "shipping_cost", "shipping_details", "statement_descriptor", "status", "subscription", "subscription_details", "subtotal_excluding_tax", "tax", "test_clock", "total_discount_amounts", "total_excluding_tax", "transfer_data", "webhooks_delivered_at"]
+      },
+      "line_item": {
+        "required": ["amount", "amount_excluding_tax", "currency", "description", "discount_amounts", "discountable", "discounts", "id", "invoice", "livemode", "metadata", "object", "period", "plan", "price", "proration", "proration_details", "quantity", "subscription", "tax_amounts", "tax_rates", "type", "unit_amount_excluding_tax"],
+        "optional": ["invoice_item", "subscription_item"],
+        "includable": [],
+        "nullable": ["amount_excluding_tax", "description", "discount_amounts", "invoice", "plan", "price", "proration_details", "quantity", "subscription", "unit_amount_excluding_tax"]
+      },
+      "billing_portal.configuration": {
+        "required": ["active", "application", "business_profile", "created", "default_return_url", "features", "id", "is_default", "livemode", "login_page", "metadata", "object", "updated"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["application", "default_return_url", "metadata"]
+      },
+      "billing_portal.session": {
+        "required": ["configuration", "created", "customer", "flow", "id", "livemode", "locale", "object", "on_behalf_of", "return_url", "url"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["flow", "locale", "on_behalf_of", "return_url"]
+      },
+      "test_helpers.test_clock": {
+        "required": ["created", "deletes_after", "frozen_time", "id", "livemode", "name", "object", "status", "status_details"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["name"]
+      },
+      "event": {
+        "required": ["api_version", "created", "data", "id", "livemode", "object", "pending_webhooks", "request", "type"],
+        "optional": ["account"],
+        "includable": [],
+        "nullable": ["api_version", "request"]
+      }
+    },
+    "2026-08-26.dahlia": {
+      "customer": {
+        "required": ["created", "default_source", "description", "email", "id", "livemode", "object", "shipping"],
+        "optional": ["address", "balance", "business_name", "currency", "customer_account", "delinquent", "discount", "individual_name", "invoice_prefix", "invoice_settings", "metadata", "name", "next_invoice_sequence", "phone", "preferred_locales", "tax_exempt", "test_clock"],
+        "includable": ["cash_balance", "invoice_credit_balance", "sources", "subscriptions", "tax", "tax_ids"],
+        "nullable": ["address", "cash_balance", "currency", "customer_account", "default_source", "delinquent", "description", "discount", "email", "invoice_prefix", "name", "phone", "preferred_locales", "shipping", "tax_exempt", "test_clock"]
+      },
+      "product": {
+        "required": ["active", "created", "description", "id", "images", "livemode", "marketing_features", "metadata", "name", "object", "package_dimensions", "shippable", "type", "updated", "url"],
+        "optional": ["default_price", "statement_descriptor", "tax_code", "unit_label"],
+        "includable": [],
+        "nullable": ["default_price", "description", "package_dimensions", "shippable", "statement_descriptor", "tax_code", "unit_label", "url"]
+      },
+      "price": {
+        "required": ["active", "billing_scheme", "created", "currency", "custom_unit_amount", "id", "livemode", "lookup_key", "metadata", "nickname", "object", "product", "recurring", "tax_behavior", "tiers_mode", "transform_quantity", "type", "unit_amount", "unit_amount_decimal"],
+        "optional": [],
+        "includable": ["currency_options", "tiers"],
+        "nullable": ["custom_unit_amount", "lookup_key", "nickname", "recurring", "tax_behavior", "tiers_mode", "transform_quantity", "unit_amount", "unit_amount_decimal"]
+      },
+      "payment_method": {
+        "required": ["billing_details", "created", "customer", "customer_account", "id", "livemode", "metadata", "object", "type"],
+        "optional": ["acss_debit", "affirm", "afterpay_clearpay", "alipay", "allow_redisplay", "alma", "amazon_pay", "au_becs_debit", "bacs_debit", "bancontact", "billie", "bizum", "blik", "boleto", "card", "card_present", "cashapp", "crypto", "custom", "customer_balance", "eps", "fpx", "giropay", "grabpay", "ideal", "interac_present", "kakao_pay", "klarna", "konbini", "kr_card", "link", "mb_way", "mobilepay", "multibanco", "naver_pay", "nz_bank_account", "oxxo", "p24", "pay_by_bank", "payco", "paynow", "paypal", "payto", "pix", "promptpay", "radar_options", "revolut_pay", "samsung_pay", "satispay", "scalapay", "sepa_debit", "sofort", "sunbit", "swish", "twint", "upi", "us_bank_account", "wechat_pay", "zip"],
+        "includable": [],
+        "nullable": ["customer", "customer_account", "metadata"]
+      },
+      "checkout.session": {
+        "required": ["adaptive_pricing", "after_expiration", "allow_promotion_codes", "amount_subtotal", "amount_total", "automatic_tax", "billing_address_collection", "cancel_url", "client_reference_id", "client_secret", "collected_information", "consent", "consent_collection", "created", "currency", "currency_conversion", "custom_fields", "custom_text", "customer", "customer_account", "customer_creation", "customer_details", "customer_email", "discounts", "expires_at", "id", "integration_identifier", "invoice", "invoice_creation", "livemode", "locale", "managed_payments", "metadata", "mode", "object", "origin_context", "payment_intent", "payment_link", "payment_method_collection", "payment_method_configuration_details", "payment_method_options", "payment_method_types", "payment_status", "permissions", "recovered_from", "saved_payment_method_options", "setup_intent", "shipping_address_collection", "shipping_cost", "shipping_options", "status", "submit_type", "subscription", "success_url", "total_details", "ui_mode", "url", "wallet_options"],
+        "optional": ["branding_settings", "excluded_payment_method_types", "name_collection", "phone_number_collection", "presentment_details", "redirect_on_completion", "return_url", "tax_id_collection"],
+        "includable": ["line_items", "optional_items"],
+        "nullable": ["adaptive_pricing", "after_expiration", "allow_promotion_codes", "amount_subtotal", "amount_total", "billing_address_collection", "cancel_url", "client_reference_id", "client_secret", "collected_information", "consent", "consent_collection", "currency", "currency_conversion", "customer", "customer_account", "customer_creation", "customer_details", "customer_email", "discounts", "integration_identifier", "invoice", "invoice_creation", "locale", "managed_payments", "metadata", "optional_items", "origin_context", "payment_intent", "payment_link", "payment_method_collection", "payment_method_configuration_details", "payment_method_options", "permissions", "recovered_from", "saved_payment_method_options", "setup_intent", "shipping_address_collection", "shipping_cost", "status", "submit_type", "subscription", "success_url", "total_details", "ui_mode", "url", "wallet_options"]
+      },
+      "subscription": {
+        "required": ["application", "application_fee_percent", "automatic_tax", "billing_cycle_anchor", "billing_cycle_anchor_config", "billing_mode", "billing_schedules", "billing_thresholds", "cancel_at", "cancel_at_period_end", "canceled_at", "cancellation_details", "collection_method", "created", "currency", "customer", "customer_account", "days_until_due", "default_payment_method", "default_source", "description", "discounts", "ended_at", "id", "invoice_settings", "items", "latest_invoice", "livemode", "managed_payments", "metadata", "next_pending_invoice_item_invoice", "object", "on_behalf_of", "pause_collection", "payment_settings", "pending_invoice_item_interval", "pending_setup_intent", "pending_update", "schedule", "start_date", "status", "test_clock", "transfer_data", "trial_end", "trial_settings", "trial_start"],
+        "optional": ["default_tax_rates", "presentment_details"],
+        "includable": [],
+        "nullable": ["application", "application_fee_percent", "billing_cycle_anchor_config", "billing_thresholds", "cancel_at", "canceled_at", "cancellation_details", "customer_account", "days_until_due", "default_payment_method", "default_source", "default_tax_rates", "description", "ended_at", "latest_invoice", "managed_payments", "next_pending_invoice_item_invoice", "on_behalf_of", "pause_collection", "payment_settings", "pending_invoice_item_interval", "pending_setup_intent", "pending_update", "schedule", "test_clock", "transfer_data", "trial_end", "trial_settings", "trial_start"]
+      },
+      "subscription_item": {
+        "required": ["billing_thresholds", "created", "current_period_end", "current_period_start", "discounts", "id", "metadata", "object", "plan", "price", "subscription", "tax_rates"],
+        "optional": ["quantity"],
+        "includable": ["billed_until"],
+        "nullable": ["billing_thresholds", "tax_rates"]
+      },
+      "subscription_schedule": {
+        "required": ["application", "billing_mode", "canceled_at", "completed_at", "created", "current_phase", "customer", "customer_account", "default_settings", "end_behavior", "id", "livemode", "metadata", "object", "phases", "released_at", "released_subscription", "status", "subscription", "test_clock"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["application", "canceled_at", "completed_at", "current_phase", "customer_account", "metadata", "released_at", "released_subscription", "subscription", "test_clock"]
+      },
+      "invoice": {
+        "required": ["account_country", "account_name", "account_tax_ids", "amount_due", "amount_overpaid", "amount_paid", "amount_remaining", "amount_shipping", "application", "attempt_count", "attempted", "auto_advance", "automatic_tax", "automatically_finalizes_at", "billing_reason", "collection_method", "created", "currency", "custom_fields", "customer", "customer_account", "customer_address", "customer_email", "customer_name", "customer_phone", "customer_shipping", "customer_tax_exempt", "default_payment_method", "default_source", "default_tax_rates", "description", "discounts", "due_date", "effective_at", "ending_balance", "footer", "from_invoice", "id", "issuer", "last_finalization_error", "latest_revision", "lines", "livemode", "metadata", "next_payment_attempt", "number", "object", "on_behalf_of", "parent", "payment_settings", "period_end", "period_start", "post_payment_credit_notes_amount", "pre_payment_credit_notes_amount", "receipt_number", "rendering", "shipping_cost", "shipping_details", "starting_balance", "statement_descriptor", "status", "status_transitions", "subtotal", "subtotal_excluding_tax", "test_clock", "total", "total_discount_amounts", "total_excluding_tax", "total_pretax_credit_amounts", "total_taxes", "webhooks_delivered_at"],
+        "optional": ["customer_tax_ids", "hosted_invoice_url", "invoice_pdf", "subscription", "threshold_reason"],
+        "includable": ["amount_paid_off_stripe", "confirmation_secret", "payments"],
+        "nullable": ["account_country", "account_name", "account_tax_ids", "application", "automatically_finalizes_at", "billing_reason", "confirmation_secret", "custom_fields", "customer", "customer_account", "customer_address", "customer_email", "customer_name", "customer_phone", "customer_shipping", "customer_tax_exempt", "customer_tax_ids", "default_payment_method", "default_source", "description", "due_date", "effective_at", "ending_balance", "footer", "from_invoice", "hosted_invoice_url", "invoice_pdf", "last_finalization_error", "latest_revision", "metadata", "next_payment_attempt", "number", "on_behalf_of", "parent", "receipt_number", "rendering", "shipping_cost", "shipping_details", "statement_descriptor", "status", "subscription", "subtotal_excluding_tax", "test_clock", "total_discount_amounts", "total_excluding_tax", "total_pretax_credit_amounts", "total_taxes", "webhooks_delivered_at"]
+      },
+      "line_item": {
+        "required": ["amount", "currency", "description", "discount_amounts", "discountable", "discounts", "id", "invoice", "livemode", "metadata", "object", "parent", "period", "pretax_credit_amounts", "pricing", "quantity", "quantity_decimal", "subscription", "subtotal", "taxes"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["description", "discount_amounts", "invoice", "parent", "pretax_credit_amounts", "pricing", "quantity", "quantity_decimal", "subscription", "taxes"]
+      },
+      "billing_portal.configuration": {
+        "required": ["active", "application", "business_profile", "created", "default_return_url", "features", "id", "is_default", "livemode", "login_page", "metadata", "name", "object", "updated"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["application", "default_return_url", "metadata", "name"]
+      },
+      "billing_portal.session": {
+        "required": ["configuration", "created", "customer", "customer_account", "flow", "id", "livemode", "locale", "object", "on_behalf_of", "return_url", "url"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["customer_account", "flow", "locale", "on_behalf_of", "return_url"]
+      },
+      "test_helpers.test_clock": {
+        "required": ["created", "deletes_after", "frozen_time", "id", "livemode", "name", "object", "status", "status_details"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["name"]
+      },
+      "event": {
+        "required": ["api_version", "created", "data", "id", "livemode", "object", "pending_webhooks", "request", "type"],
+        "optional": ["account", "context"],
+        "includable": [],
+        "nullable": ["api_version", "request"]
+      }
+    }
+  }
+}

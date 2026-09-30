@@ -1,0 +1,51 @@
+{
+  "name": "stripe-test-server",
+  "version": "0.1.0",
+  "description": "A local test server for Stripe Billing: customers, prices, Checkout, subscriptions, schedules, invoices, the customer portal, test clocks and signed webhooks, for testing with the official stripe SDK",
+  "license": "MIT",
+  "author": "Anatoly Ben",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "types": "./src/index.d.ts",
+  "bin": {
+    "stripe-test-server": "bin/stripe-test-server.js"
+  },
+  "files": [
+    "src",
+    "bin",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "stripe",
+    "stripe-billing",
+    "subscriptions",
+    "checkout",
+    "customer-portal",
+    "webhooks",
+    "test-clocks",
+    "test-server",
+    "testing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anatolyben/stripe-test-server.git"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit --strict src/index.d.ts"
+  },
+  "devDependencies": {
+    "stripe": "^22.6.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}
