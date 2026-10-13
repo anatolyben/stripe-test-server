@@ -39,9 +39,9 @@ clock).
 | `src/core/currency.js`, `util.js`, `options.js` | Currencies, small shared helpers, option validation |
 | `src/customers/` | Customers: the reference resource (see [Adding a resource](#adding-a-resource)) |
 | `src/catalog/` | Products and prices |
-| `src/payments/` | Test cards, PaymentMethods, PaymentIntents, Charges, `failNextCharge` |
+| `src/payments/` | Test cards, PaymentMethods, PaymentIntents, Charges, card refunds (`refunds.js`), `failNextCharge` and `failNextRefund` |
 | `src/checkout/` | Checkout Sessions API and the hosted Checkout page; `page_kit.js` (card form, page styles) and `pricing.js` (price labels, amounts) serve every hosted page |
-| `src/billing/` | The billing engine (`engine.js`: every subscription and invoice state change, billing jobs, dunning, prorations), the invoice lifecycle (`invoicing.js`), money and period helpers (`util.js`), the subscriptions and subscription items API with the legacy `plan` rendering (`subscriptions.js`), invoices, invoice payments and invoice items (`invoices.js`), the hosted invoice page (`invoice_page.js`) |
+| `src/billing/` | The billing engine (`engine.js`: every subscription and invoice state change, billing jobs, dunning, prorations), the invoice lifecycle (`invoicing.js`), money and period helpers (`util.js`), the subscriptions and subscription items API with the legacy `plan` rendering (`subscriptions.js`), invoices, invoice payments and invoice-item serializers (`invoices.js`), invoice-item API (`invoice_items.js`), credit notes (`credit_notes.js`), the hosted invoice page (`invoice_page.js`) |
 | `src/schedules/` | Subscription schedules: API and phase transitions |
 | `src/portal/` | Portal configurations, portal sessions, the hosted portal |
 | `src/webhooks/` | Delivery (signing, retries, hold/release, duplicates, settle), the webhook controls, `/v1/webhook_endpoints` |
@@ -83,9 +83,9 @@ app.hook(name, fn)                                               // lifecycle ho
 ### Install order
 
 `src/app.js` installs, in this order: `core/events`, `core/controls`, `customers/customers`,
-`catalog/products`, `catalog/prices`, `payments/payment_methods`, `payments/payment_intents`,
+`catalog/products`, `catalog/prices`, `payments/payment_methods`, `payments/payment_intents`, `payments/refunds`,
 `checkout/sessions`, `checkout/checkout_page`, `billing/engine`, `billing/subscriptions`,
-`billing/invoices`, `billing/invoice_page`, `schedules/schedules`, `portal/configurations`,
+`billing/invoices`, `billing/invoice_items`, `billing/credit_notes`, `billing/invoice_page`, `schedules/schedules`, `portal/configurations`,
 `portal/sessions`, `portal/portal_page`, `webhooks/delivery`, `webhooks/endpoints`,
 `test_clocks/test_clocks`. A new module with its own `install()` must be added there (or be
 installed from one of the listed modules' `install`). Order matters only for hooks, which run in
@@ -141,7 +141,7 @@ test clock to `ready`, recording a delivery result) must do it inside `account.r
 **IDs.** `account.mintId('cus')` → `cus_` + 24 base62 characters derived from (key, prefix,
 counter): deterministic per account, reset by `reset()`. Prefixes in use: `cus`, `prod`, `price`,
 `pm`, `pi`, `ch`, `seti`, `cs_test`, `li` (Checkout line item), `sub`, `si`, `sub_sched`, `in`,
-`il`, `ii` (invoice item), `inpay`, `bpc`, `bps`, `clock`, `evt`, `we`. Hosted-page tokens come
+`il`, `ii` (invoice item), `cn`, `cnli`, `re`, `cbtxn`, `inpay`, `bpc`, `bps`, `clock`, `evt`, `we`. Hosted-page tokens come
 from `account.mintId('test')` (also registered, so a page resolves the account from its token).
 Request IDs are `req_` + 14 (minted by the core).
 
@@ -165,6 +165,7 @@ store.types(), store.clear()
 Collections are keyed by the Stripe `object` value: `customer`, `product`, `price`,
 `payment_method`, `payment_intent`, `charge`, `checkout.session`, `subscription`,
 `subscription_item`, `subscription_schedule`, `invoice`, `invoiceitem`, `invoice_payment`,
+`credit_note`, `refund`, `customer_balance_transaction` (credits issued by credit notes only),
 `billing_portal.configuration`, `billing_portal.session`, `test_helpers.test_clock`,
 `webhook_endpoint`. Events live in `account.events`, not in the store.
 
@@ -589,6 +590,7 @@ account lock unless `lock: false`.
 | `billingSettings()` / `updateBillingSettings(patch)` | `GET` / `POST /_test/billing_settings` | `{ retrySchedule?, afterFinalRetry?, markUncollectible? }` → settings | core |
 | `deleteCustomer(id)` | `POST /_test/delete_customer` | `{ customer }` → deleted stub | `customers.deleteCustomer` |
 | `failNextCharge(customerId, { times = 1, declineCode = 'generic_decline' })` | `POST /_test/fail_next_charge` | `{ customer, times, declineCode }` → `{ customer, remaining, declineCode }` | `payments.failNextCharge` |
+| `failNextRefund(customerId, { times = 1, failureReason = 'declined' })` | `POST /_test/fail_next_refund` | `{ customer, times, failureReason }` → `{ customer, remaining, failureReason }` | `payments/refunds.failNextRefund` |
 | `createSubscription(customerId, { price, quantity?, trialDays?, paymentMethod? })` | `POST /_test/create_subscription` | `{ customer, price, … }` → rendered subscription | `billing.createSubscriptionForTest` |
 | `setWebhookEndpoints([{ url, secret, apiVersion? }])` | `PUT /_test/webhook_endpoints` | `{ endpoints }` → endpoint records | webhooks |
 | `webhooks.deliveries(filter?)` | `GET /_test/webhooks/deliveries` | `{ eventId?, eventType?, endpointId?, status?, kind?, limit? }` → delivery records | webhooks |
@@ -634,8 +636,7 @@ a contract: tests assert `type`, `code` and `param`, never message text.
   the creating request's version is 2025-09-30.clover or later; objects created later on behalf
   of an earlier request (Checkout) record that request's version.
 - `src/schemas/params.js` is generated by `scripts/build-param-schemas.mjs` from Stripe's OpenAPI
-  specs (github.com/stripe/openapi) and committed; the script only needs to run when moving to a
-  newer API version, and its header lists the inputs. It holds 68 operations, body and query
+  specs (github.com/stripe/openapi) and committed; the script runs when supported operations or API versions change, and its header lists the inputs. It holds 89 operations, body and query
   merged; every registered route has one. The base is the 2026-08-26.dahlia spec (tag v2442)
   plus the parameters only the SDK's spec has. Parameters removed in later versions carry
   `until` (`coupon` / `promotion_code`, `aggregate_usage`, `phases.coupon` → basil;
@@ -681,6 +682,7 @@ Exact signatures and JSDoc are in the modules; this is the map. "→" = returns.
 - `payments/test_cards.js`: `TEST_CARDS` (entry shape in the file), `findTestCard(numberOrAlias)`, `findTestCardAlias`, `normalizeCardNumber`, `cardChargeOutcome`, `CARD_ERROR_MESSAGES`, `CARD_ERROR_PARAMS`, `DECLINE_CODES`.
 - `payments/payment_methods.js`: `attachPaymentMethod(account, ref, customer, { param, request })` (an alias mints a new PaymentMethod on every attach), `detachPaymentMethod(account, pm, { request })` (then runs the `payment_method.detached` hook), `requireAttachedPaymentMethod(account, id, customer, { param })`, `createCardPaymentMethod(account, card, { request, allowRedisplay = 'limited' })` (hosted-page cards count as set up for off-session use), `testCardOf(pm)`, `renderPaymentMethod`. Internal fields: `_card { number, setUp }`, `_detached`.
 - `payments/payment_intents.js`: `createPaymentIntent(account, spec, { request })`; `confirmPaymentIntent(account, pi, { paymentMethod, offSession = true }, { request, version })` → `{ ok, paymentIntent, charge, error }` (an unusable PaymentMethod gives `ok: false` with a 400 and leaves the PaymentIntent unchanged; only a PaymentIntent that is not open throws; pass `offSession: false` for on-session payments such as hosted pages); `cancelPaymentIntent`; `predictChargeFailure(account, { paymentMethod, customer, amount, currency, offSession = false, consume = false })` → null or `{ code, declineCode, message }` (`consume: true` uses up a queued `failNextCharge` failure it reports); `cardDeclineError(failure, { charge, paymentIntent, paymentMethod })` → the 402; `failNextCharge(account, customerId, { times, declineCode })`.
+- `payments/refunds.js`: `prepareRefund` validates without effects; `createRefund`, `updateRefund`, `cancelRefund`, `failNextRefund` and `renderRefund`. Charge refund totals are changed through `payment_intents.updateChargeRefunded`, which excludes failed/canceled refunds. Refund events use the shared event bus and signing/delivery pipeline.
 - `checkout/sessions.js`: `completeSession(account, session, { paymentMethod, card?, email, name, phone, address, shipping, businessName, individualName, customFields, consent, quantities, optionalItems })`, `createSession`, `expireSession`, `amountDueToday`, `finalLineItems`, `hasTrial`, `renderSession`, `renderItem`.
 - `checkout/pricing.js` (amounts through the billing engine's `amountFor`, labels, yearly cost) and `checkout/page_kit.js` (card fields, `readCardForm`, notices, styles) serve every hosted page.
 
@@ -698,6 +700,18 @@ request).
 - `resumeSubscription(account, sub, params, opts)`; `setSubscriptionSchedule(account, sub, scheduleId, { request })`
 - `payInvoice(account, invoice, { paymentMethod, offSession, source, request, paidOutOfBand })` → `{ invoice, ok, error }`
 - `currentPeriod(sub)` → `{ start, end }`; `subscriptionsForCustomer(account, customerId, { includeEnded })`; `defaultBillingMode(version)`; `createSubscriptionForTest(account, customerId, opts)`
+
+`billing/invoices.js` also exports `createManualInvoice`, `updateInvoice` and `deleteDraftInvoice`.
+`billing/invoice_items.js` owns API validation and `createItem`, `updateItem`, `deleteItem`; it uses
+`invoicing.createInvoiceItem`, `attachInvoiceItem`, `refreshInvoiceItem` and `computeTotals`, so
+subscription-generated items and API items share one representation. Renewal/trial-end sweeps can
+include unscoped customer items; subscription-specific mutation helpers keep their narrower scope.
+`billing/credit_notes.js` prepares every line and refund allocation before changing state, and
+exports `createCreditNote`, `previewCreditNote`, `updateCreditNote`, `voidCreditNote` and the
+versioned serializers. Preview IDs are placeholders and no store, events or counters change.
+Invoice accounting goes through `invoicing.adjustInvoiceCreditNotes`; unpaid PaymentIntent amounts
+change through `payment_intents.updateInvoicePaymentIntentAmount`. Customer credits use
+`customers.changeCustomer` and store a balance transaction for the credit note's expandable link.
 
 The invoice lifecycle (drafts, totals, finalization, payment attempts, void, uncollectible) is
 `billing/invoicing.js`, which calls the engine back through `onInvoiceSettled` /
@@ -724,7 +738,7 @@ embedded in subscription items (and 2024-06-20 invoice lines) is rendered by
 | Caller | Calls |
 |---|---|
 | customers | payments `attachPaymentMethod`, `requireAttachedPaymentMethod`; hook `customer.deleting` (payments detaches cards, billing cancels subscriptions) |
-| core controls | payments `failNextCharge`; billing `createSubscriptionForTest`; webhook delivery functions |
+| core controls | payments `failNextCharge`, `failNextRefund`; billing `createSubscriptionForTest`; webhook delivery functions |
 | Checkout | customers; catalog (`preparePrice`, `createPrice`, `requirePrice`) and payments (`attachPaymentMethod`, `testCardOf`, `predictChargeFailure`, `cardDeclineError`); billing `createSubscription`, `payInvoice` and `updateSubscription` (2024-06-20 retry), `billing/util` amounts |
 | billing engine and routes | customers (`changeCustomer` for currency / delinquent / balance / invoice numbering); catalog `requirePrice`, `preparePrice`, `insertPrice`; payments `createPaymentIntent`, `confirmPaymentIntent`, `cancelPaymentIntent`, `attachPaymentMethod`; schedules `onSubscriptionCanceled`, `onSubscriptionUpdated`; prices and products read through the store |
 | hosted invoice page | payments `createCardPaymentMethod`, `attachPaymentMethod`; `checkout/page_kit`; billing `payInvoice` |

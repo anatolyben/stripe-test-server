@@ -6,8 +6,7 @@
  * 2024-06-20 tag, and at tag v2442, the 2026-08-26.dahlia tag stripe-node 22.6.2 is built from).
  * test/shapes.test.js checks every rendered object against it.
  *
- * test/fixtures/spec-keys.json is committed, so this script only needs to run when the server
- * moves to a newer Stripe API version. Its input is not in this repository: a JSON summary of the
+ * test/fixtures/spec-keys.json is committed, so this script runs when rendered object types or Stripe API versions change. Its input is not in this repository: a JSON summary of the
  * object schemas of those specs, with one entry per `<object>@2024-06-20` and `<object>@latest`
  * (latest = 2026-08-26.dahlia) for every type in TYPES below, shaped
  * { properties: { <name>: { required, nullable, docs: { includable } } } }:
@@ -44,6 +43,10 @@ const TYPES = [
   'subscription',
   'subscription_item',
   'subscription_schedule',
+  'invoiceitem',
+  'refund',
+  'credit_note',
+  'credit_note_line_item',
   'invoice',
   'line_item',
   'billing_portal.configuration',

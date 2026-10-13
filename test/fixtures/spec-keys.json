@@ -50,6 +50,30 @@
         "includable": [],
         "nullable": ["application", "canceled_at", "completed_at", "current_phase", "metadata", "released_at", "released_subscription", "subscription", "test_clock"]
       },
+      "invoiceitem": {
+        "required": ["amount", "currency", "customer", "date", "description", "discountable", "discounts", "id", "invoice", "livemode", "metadata", "object", "period", "plan", "price", "proration", "quantity", "subscription", "tax_rates", "test_clock", "unit_amount", "unit_amount_decimal"],
+        "optional": ["subscription_item"],
+        "includable": [],
+        "nullable": ["description", "discounts", "invoice", "metadata", "plan", "price", "subscription", "tax_rates", "test_clock", "unit_amount", "unit_amount_decimal"]
+      },
+      "refund": {
+        "required": ["amount", "balance_transaction", "charge", "created", "currency", "id", "metadata", "object", "payment_intent", "reason", "receipt_number", "source_transfer_reversal", "status", "transfer_reversal"],
+        "optional": ["description", "destination_details", "failure_balance_transaction", "failure_reason", "instructions_email", "next_action"],
+        "includable": [],
+        "nullable": ["balance_transaction", "charge", "metadata", "payment_intent", "reason", "receipt_number", "source_transfer_reversal", "status", "transfer_reversal"]
+      },
+      "credit_note": {
+        "required": ["amount", "amount_shipping", "created", "currency", "customer", "customer_balance_transaction", "discount_amount", "discount_amounts", "effective_at", "id", "invoice", "lines", "livemode", "memo", "metadata", "number", "object", "out_of_band_amount", "pdf", "reason", "refund", "shipping_cost", "status", "subtotal", "subtotal_excluding_tax", "tax_amounts", "total", "total_excluding_tax", "type", "voided_at"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["customer_balance_transaction", "effective_at", "memo", "metadata", "out_of_band_amount", "reason", "refund", "shipping_cost", "subtotal_excluding_tax", "total_excluding_tax", "voided_at"]
+      },
+      "credit_note_line_item": {
+        "required": ["amount", "amount_excluding_tax", "description", "discount_amount", "discount_amounts", "id", "livemode", "object", "quantity", "tax_amounts", "tax_rates", "type", "unit_amount", "unit_amount_decimal", "unit_amount_excluding_tax"],
+        "optional": ["invoice_line_item"],
+        "includable": [],
+        "nullable": ["amount_excluding_tax", "description", "quantity", "unit_amount", "unit_amount_decimal", "unit_amount_excluding_tax"]
+      },
       "invoice": {
         "required": ["account_country", "account_name", "account_tax_ids", "amount_due", "amount_paid", "amount_remaining", "amount_shipping", "application", "application_fee_amount", "attempt_count", "attempted", "automatic_tax", "automatically_finalizes_at", "billing_reason", "charge", "collection_method", "created", "currency", "custom_fields", "customer", "customer_address", "customer_email", "customer_name", "customer_phone", "customer_shipping", "customer_tax_exempt", "default_payment_method", "default_source", "default_tax_rates", "description", "discount", "discounts", "due_date", "effective_at", "ending_balance", "footer", "from_invoice", "issuer", "last_finalization_error", "latest_revision", "lines", "livemode", "metadata", "next_payment_attempt", "number", "object", "on_behalf_of", "paid", "paid_out_of_band", "payment_intent", "payment_settings", "period_end", "period_start", "post_payment_credit_notes_amount", "pre_payment_credit_notes_amount", "quote", "receipt_number", "rendering", "shipping_cost", "shipping_details", "starting_balance", "statement_descriptor", "status", "status_transitions", "subscription", "subscription_details", "subtotal", "subtotal_excluding_tax", "tax", "test_clock", "total", "total_discount_amounts", "total_excluding_tax", "total_tax_amounts", "transfer_data", "webhooks_delivered_at"],
         "optional": ["auto_advance", "customer_tax_ids", "hosted_invoice_url", "id", "invoice_pdf", "subscription_proration_date", "threshold_reason"],
@@ -135,6 +159,30 @@
         "optional": [],
         "includable": [],
         "nullable": ["application", "canceled_at", "completed_at", "current_phase", "customer_account", "metadata", "released_at", "released_subscription", "subscription", "test_clock"]
+      },
+      "invoiceitem": {
+        "required": ["amount", "currency", "customer", "customer_account", "date", "description", "discountable", "discounts", "id", "invoice", "livemode", "metadata", "object", "parent", "period", "pricing", "proration", "quantity", "quantity_decimal", "tax_rates", "test_clock"],
+        "optional": ["frozen_fields", "net_amount", "proration_details"],
+        "includable": [],
+        "nullable": ["customer_account", "description", "discounts", "invoice", "metadata", "parent", "pricing", "tax_rates", "test_clock"]
+      },
+      "refund": {
+        "required": ["amount", "balance_transaction", "charge", "created", "currency", "customer", "customer_account", "id", "metadata", "object", "payment_intent", "payment_method", "reason", "receipt_number", "source_transfer_reversal", "status", "transfer_reversal"],
+        "optional": ["description", "destination_details", "failure_balance_transaction", "failure_reason", "instructions_email", "next_action", "pending_reason", "presentment_details"],
+        "includable": [],
+        "nullable": ["balance_transaction", "charge", "customer", "customer_account", "metadata", "payment_intent", "payment_method", "reason", "receipt_number", "source_transfer_reversal", "status", "transfer_reversal"]
+      },
+      "credit_note": {
+        "required": ["amount", "amount_shipping", "created", "currency", "customer", "customer_account", "customer_balance_transaction", "discount_amount", "discount_amounts", "effective_at", "id", "invoice", "lines", "livemode", "memo", "metadata", "number", "object", "out_of_band_amount", "pdf", "post_payment_amount", "pre_payment_amount", "pretax_credit_amounts", "reason", "refunds", "shipping_cost", "status", "subtotal", "subtotal_excluding_tax", "total", "total_excluding_tax", "total_taxes", "type", "voided_at"],
+        "optional": [],
+        "includable": [],
+        "nullable": ["customer_account", "customer_balance_transaction", "effective_at", "memo", "metadata", "out_of_band_amount", "reason", "shipping_cost", "subtotal_excluding_tax", "total_excluding_tax", "total_taxes", "voided_at"]
+      },
+      "credit_note_line_item": {
+        "required": ["amount", "description", "discount_amount", "discount_amounts", "id", "livemode", "metadata", "object", "pretax_credit_amounts", "quantity", "tax_rates", "taxes", "type", "unit_amount", "unit_amount_decimal"],
+        "optional": ["invoice_line_item"],
+        "includable": [],
+        "nullable": ["description", "metadata", "quantity", "taxes", "unit_amount", "unit_amount_decimal"]
       },
       "invoice": {
         "required": ["account_country", "account_name", "account_tax_ids", "amount_due", "amount_overpaid", "amount_paid", "amount_remaining", "amount_shipping", "application", "attempt_count", "attempted", "auto_advance", "automatic_tax", "automatically_finalizes_at", "billing_reason", "collection_method", "created", "currency", "custom_fields", "customer", "customer_account", "customer_address", "customer_email", "customer_name", "customer_phone", "customer_shipping", "customer_tax_exempt", "default_payment_method", "default_source", "default_tax_rates", "description", "discounts", "due_date", "effective_at", "ending_balance", "footer", "from_invoice", "id", "issuer", "last_finalization_error", "latest_revision", "lines", "livemode", "metadata", "next_payment_attempt", "number", "object", "on_behalf_of", "parent", "payment_settings", "period_end", "period_start", "post_payment_credit_notes_amount", "pre_payment_credit_notes_amount", "receipt_number", "rendering", "shipping_cost", "shipping_details", "starting_balance", "statement_descriptor", "status", "status_transitions", "subtotal", "subtotal_excluding_tax", "test_clock", "total", "total_discount_amounts", "total_excluding_tax", "total_pretax_credit_amounts", "total_taxes", "webhooks_delivered_at"],

@@ -16,7 +16,7 @@ import { minimumCharge } from '../core/currency.js';
 import { atLeast } from '../core/versions.js';
 import { JOB_PRIORITY } from '../core/time.js';
 import { changeCustomer } from '../customers/customers.js';
-import { cancelPaymentIntent, confirmPaymentIntent, createPaymentIntent } from '../payments/payment_intents.js';
+import { cancelPaymentIntent, confirmPaymentIntent, createPaymentIntent, updateInvoicePaymentIntentAmount } from '../payments/payment_intents.js';
 import { onInvoiceSettled, onPaymentFailure } from './engine.js';
 import {
   DAY,
@@ -60,8 +60,11 @@ export function invoicesOfSubscription(account, subscriptionId) {
 }
 
 /** Pending (not yet invoiced) invoice items of a subscription, in creation order. */
-export function pendingInvoiceItems(account, subscriptionId) {
-  return account.store.list('invoiceitem', (ii) => ii.invoice === null && !ii._deleted && ii.parent?.subscription_details?.subscription === subscriptionId);
+export function pendingInvoiceItems(account, subscriptionId, { includeCustomer = false } = {}) {
+  const sub = account.store.get('subscription', subscriptionId);
+  return account.store.list('invoiceitem', (ii) => ii.invoice === null && !ii._deleted &&
+    (ii.parent?.subscription_details?.subscription === subscriptionId ||
+      (includeCustomer && !ii.parent?.subscription_details?.subscription && ii.customer === sub?.customer && ii.currency === sub?.currency)));
 }
 
 // Construction ----------------------------------------------------------------------------------
@@ -225,7 +228,7 @@ export function createInvoiceItem(account, s) {
     id: account.mintId('ii'),
     object: 'invoiceitem',
     amount: s.amount,
-    currency: s.price.currency,
+    currency: s.currency ?? s.price.currency,
     customer: s.customer.id,
     customer_account: null,
     date: now,
@@ -240,9 +243,9 @@ export function createInvoiceItem(account, s) {
       : null,
     period: { end: s.end, start: s.start },
     pricing: {
-      price_details: { price: s.price.id, product: s.price.product },
+      ...(s.price ? { price_details: { price: s.price.id, product: s.price.product } } : {}),
       type: 'price_details',
-      unit_amount_decimal: decimalString(s.quantity ? s.amount / s.quantity : 0),
+      unit_amount_decimal: s.unitAmountDecimal ?? decimalString(s.quantity ? s.amount / s.quantity : 0),
     },
     proration: Boolean(s.proration),
     proration_details: { credited_items: s.creditedItems ?? null, discount_amounts: [] },
@@ -258,8 +261,10 @@ export function createInvoiceItem(account, s) {
 
 /** Moves an invoice item onto an invoice as a line (proration lines keep their subscription item). */
 export function attachInvoiceItem(account, invoice, ii) {
+  if (ii.invoice === invoice.id) return invoice.lines.data.find((l) => (l.parent?.invoice_item_details ?? l.parent?.subscription_item_details)?.invoice_item === ii.id);
+  if (ii.invoice || invoice.status !== 'draft' || ii.customer !== invoice.customer || ii.currency !== invoice.currency) throw invalidRequest('Invoice item cannot be attached to this invoice.', { param: 'invoice' });
   ii.invoice = invoice.id;
-  const price = account.store.get('price', ii.pricing.price_details.price);
+  const price = account.store.get('price', ii.pricing?.price_details?.price);
   const sub = ii.parent?.subscription_details?.subscription ? account.store.get('subscription', ii.parent.subscription_details.subscription) : null;
   const itemId = ii.parent?.subscription_details?.subscription_item ?? null;
   if (ii.proration && itemId) {
@@ -680,4 +685,36 @@ export function stopAutomaticCollection(account, invoice, { request } = {}) {
 /** Cancels an unused PaymentIntent created for a payment that did not happen (error_if_incomplete). */
 export function discardPaymentIntent(account, pi, { request } = {}) {
   if (pi && !['succeeded', 'canceled'].includes(pi.status)) cancelPaymentIntent(account, pi, { reason: 'failed_invoice' }, { request });
+}
+
+/** Refresh the corresponding draft line without changing its ID or position. */
+export function refreshInvoiceItem(account, invoice, item) {
+  const line = invoice.lines.data.find((l) => (l.parent?.invoice_item_details ?? l.parent?.subscription_item_details)?.invoice_item === item.id);
+  if (!line || invoice.status !== 'draft') throw invalidRequest('Invoice item has no editable draft line.');
+  Object.assign(line, { amount: item.amount, subtotal: item.amount, description: item.description,
+    quantity: item.quantity, metadata: { ...item.metadata }, period: { ...item.period },
+    discountable: item.discountable, pricing: structuredClone(item.pricing) });
+  computeTotals(account, invoice);
+}
+
+/** Apply or reverse credit-note accounting; the invoice total and original lines stay intact. */
+export function adjustInvoiceCreditNotes(account, invoice, { pre, post }, { request } = {}) {
+  const previous = structuredClone(invoice);
+  invoice.pre_payment_credit_notes_amount += pre;
+  invoice.post_payment_credit_notes_amount += post;
+  invoice.amount_due -= pre;
+  invoice.amount_remaining -= pre;
+  const pi = invoice._paymentIntent ? account.store.get('payment_intent', invoice._paymentIntent) : null;
+  const payment = defaultPayment(account, invoice);
+  if (invoice.status === 'open' && pi) {
+    if (invoice.amount_remaining > 0) {
+      updateInvoicePaymentIntentAmount(account, pi, invoice.amount_remaining);
+      if (payment) payment.amount_requested = invoice.amount_remaining;
+    } else {
+      cancelPaymentIntent(account, pi, { reason: 'credit_note' }, { request });
+      if (payment) { payment.status = 'canceled'; payment.status_transitions.canceled_at = nowOf(account, invoice); }
+    }
+  }
+  if (invoice.status === 'open' && invoice.amount_remaining === 0) markPaid(account, invoice, { request, viaPayment: false, previous });
+  else emitUpdated(account, invoice, 'invoice.updated', previous, { request });
 }

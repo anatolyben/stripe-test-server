@@ -1,7 +1,7 @@
 /**
  * Invoices API, docs.stripe.com/api/invoices.
  *
- * Routes: GET /v1/invoices, GET /v1/invoices/:id, GET /v1/invoices/:id/lines,
+ * Routes: POST /v1/invoices, POST/DELETE /v1/invoices/:id, GET /v1/invoices, GET /v1/invoices/:id, GET /v1/invoices/:id/lines,
  * POST /v1/invoices/:id/pay, POST /v1/invoices/:id/void, POST /v1/invoices/:id/finalize,
  * POST /v1/invoices/:id/mark_uncollectible, GET /v1/invoice_payments,
  * GET /v1/invoice_payments/:id.
@@ -10,13 +10,18 @@
  * confirmation_secret; amount_paid_off_stripe includable from 2026-05-27.dahlia), 'line_item'
  * (2024-06-20: price, plan, type, proration; basil+: parent, pricing, taxes; subtotal from
  * 2025-12-15.clover, quantity_decimal from 2026-03-25.dahlia), 'invoice_payment' and
- * 'invoiceitem' (proration items, seen in invoiceitem.created events).
+ * 'invoiceitem' (API routes in invoice_items.js, construction shared with subscription prorations).
  */
-import { invalidRequest, parametersExclusive, resourceMissing } from '../core/errors.js';
+import { invalidParam, invalidRequest, parameterMissing, parametersExclusive, resourceMissing } from '../core/errors.js';
 import { ListResult, matchesRange, paginate } from '../core/list.js';
 import { JOB_PRIORITY } from '../core/time.js';
+import { emitEvent, updateWithEvent } from '../core/events.js';
+import { raw } from '../core/render.js';
+import { applyMetadata } from '../core/util.js';
+import { requireCustomer } from '../customers/customers.js';
+import { requireAttachedPaymentMethod } from '../payments/payment_methods.js';
 import { payInvoice } from './engine.js';
-import { finalizeInvoice, markUncollectible, voidInvoice } from './invoicing.js';
+import { attachInvoiceItem, finalizeInvoice, insertDraft, markUncollectible, newInvoice, sortPending, voidInvoice } from './invoicing.js';
 import { renderPlan } from './subscriptions.js';
 import { DRAFT_WINDOW_SECONDS, nowOf } from './util.js';
 
@@ -264,7 +269,7 @@ export function renderInvoiceItem(ii, ctx) {
     Object.assign(out, {
       tax_rates: [],
       test_clock: ii.test_clock,
-      unit_amount: Math.round(Number(ii.pricing?.unit_amount_decimal ?? 0)),
+      unit_amount: Number.isInteger(Number(ii.pricing?.unit_amount_decimal)) ? Number(ii.pricing.unit_amount_decimal) : null,
       unit_amount_decimal: ii.pricing?.unit_amount_decimal ?? null,
     });
     return out;
@@ -316,6 +321,92 @@ function paginateLines(invoice, params) {
     return new ListResult({ data: before.slice(Math.max(0, before.length - limit)), hasMore: before.length > limit, url, total: lines.length });
   }
   return new ListResult({ data: lines.slice(0, limit), hasMore: lines.length > limit, url, total: lines.length });
+}
+
+// Manual invoice creation and edits ---------------------------------------------------------------
+
+function validateInvoiceParams(account, p, customer, { update = false } = {}) {
+  const allowed = ['customer', 'subscription', 'auto_advance', 'pending_invoice_items_behavior', 'description', 'metadata', 'currency', 'collection_method', 'days_until_due', 'default_payment_method', 'expand'];
+  for (const key of Object.keys(p)) if (!allowed.includes(key)) throw invalidRequest(`Invoice parameter ${key} is not modelled.`, { param: key });
+  if (update) for (const key of ['customer', 'subscription', 'pending_invoice_items_behavior', 'currency']) if (p[key] !== undefined) throw invalidRequest(`${key} cannot be changed.`, { param: key });
+  if (p.days_until_due !== undefined && (!Number.isSafeInteger(p.days_until_due) || p.days_until_due < 0)) throw invalidParam('days_until_due', 'Must be a nonnegative integer.');
+  if (p.default_payment_method) requireAttachedPaymentMethod(account, p.default_payment_method, customer.id, { param: 'default_payment_method' });
+  return applyMetadata({}, p.metadata);
+}
+
+/** Creates only a draft; a subscription clause selects pending items without billing a period. */
+export function createManualInvoice(account, p, { request } = {}) {
+  const sub = p.subscription ? account.store.require('subscription', p.subscription, { param: 'subscription' }) : null;
+  const customerId = p.customer ?? sub?.customer;
+  if (!customerId) throw parameterMissing('customer');
+  const customer = requireCustomer(account, customerId);
+  if (sub && sub.customer !== customer.id) throw invalidRequest('Subscription belongs to another customer.', { param: 'subscription' });
+  const metadata = validateInvoiceParams(account, p, customer);
+  const items = p.pending_invoice_items_behavior === 'include'
+    ? account.store.list('invoiceitem', (i) => !i._deleted && i.invoice === null && i.customer === customer.id && (!sub || i.parent?.subscription_details?.subscription === sub.id))
+    : [];
+  const currency = p.currency ?? sub?.currency ?? items[0]?.currency ?? customer.currency ?? 'usd';
+  if (items.some((i) => i.currency !== currency) || (sub && sub.currency !== currency)) throw invalidParam('currency', 'Invoice items must have the same currency.');
+  if (items.length > 250) throw invalidRequest('An invoice can contain at most 250 items.');
+  const method = p.collection_method ?? 'charge_automatically';
+  if (p.days_until_due !== undefined && method !== 'send_invoice') throw invalidParam('days_until_due', 'Only send_invoice supports days_until_due.');
+  const now = nowOf(account, customer);
+  const invoice = newInvoice(account, { customer, subscription: sub, billingReason: 'manual',
+    collectionMethod: method, currency, now, periodStart: now, periodEnd: now,
+    autoAdvance: p.auto_advance ?? false, daysUntilDue: p.days_until_due });
+  invoice.description = p.description || null;
+  invoice.metadata = metadata;
+  invoice.default_payment_method = p.default_payment_method || null;
+  for (const item of sortPending(items)) attachInvoiceItem(account, invoice, item);
+  return insertDraft(account, invoice, { request, scheduleFinalization: true });
+}
+
+export function updateInvoice(account, invoice, p, { request } = {}) {
+  const customer = account.store.get('customer', invoice.customer);
+  validateInvoiceParams(account, p, customer, { update: true });
+  const metadata = applyMetadata(invoice.metadata, p.metadata);
+  if (invoice.status !== 'draft') {
+    for (const key of ['collection_method', 'days_until_due']) if (p[key] !== undefined) throw invalidRequest('A finalized invoice cannot change its collection method or due terms.', { param: key });
+  }
+  if (['paid', 'void', 'uncollectible'].includes(invoice.status) && p.auto_advance === true) throw invalidRequest('A terminal invoice cannot be advanced automatically.', { param: 'auto_advance' });
+  const method = p.collection_method ?? invoice.collection_method;
+  if (p.days_until_due !== undefined && method !== 'send_invoice') throw invalidParam('days_until_due', 'Only send_invoice supports days_until_due.');
+  updateWithEvent(account, invoice, 'invoice.updated', () => {
+    if (p.description !== undefined) invoice.description = p.description || null;
+    invoice.metadata = metadata;
+    if (p.default_payment_method !== undefined) invoice.default_payment_method = p.default_payment_method || null;
+    if (p.collection_method !== undefined) invoice.collection_method = p.collection_method;
+    if (p.days_until_due !== undefined) invoice._daysUntilDue = p.days_until_due;
+    if (p.auto_advance !== undefined) {
+      invoice.auto_advance = p.auto_advance;
+      account.time.cancel(`${invoice.id}:finalize`);
+      account.time.cancel(`${invoice.id}:attempt`);
+      account.time.cancel(`${invoice.id}:retry`);
+      invoice.automatically_finalizes_at = null;
+      invoice.next_payment_attempt = null;
+      if (p.auto_advance && ['draft', 'open'].includes(invoice.status)) {
+        const at = Math.max(nowOf(account, invoice), invoice.created + DRAFT_WINDOW_SECONDS);
+        const draft = invoice.status === 'draft';
+        if (draft) invoice.automatically_finalizes_at = at;
+        if (invoice.collection_method === 'charge_automatically') invoice.next_payment_attempt = at;
+        if (draft || invoice.collection_method === 'charge_automatically') account.time.schedule({
+          kind: draft ? 'invoice.finalize' : 'invoice.payment_attempt', at,
+          domain: account.time.domainOf(invoice), key: `${invoice.id}:${draft ? 'finalize' : 'attempt'}`,
+          data: { invoice: invoice.id }, priority: draft ? JOB_PRIORITY.invoiceFinalize : JOB_PRIORITY.paymentRetry,
+        });
+      }
+    }
+  }, { request });
+  return invoice;
+}
+
+export function deleteDraftInvoice(account, invoice, { request } = {}) {
+  if (invoice.status !== 'draft') throw invalidRequest('Only draft invoices can be deleted.');
+  for (const suffix of ['finalize', 'attempt', 'retry', 'due']) account.time.cancel(`${invoice.id}:${suffix}`);
+  for (const item of account.store.list('invoiceitem', (i) => i.invoice === invoice.id)) item._deleted = true;
+  emitEvent(account, 'invoice.deleted', invoice, { request });
+  invoice._deleted = true;
+  return raw({ id: invoice.id, object: 'invoice', deleted: true });
 }
 
 // Install ---------------------------------------------------------------------------------------
@@ -383,6 +474,7 @@ export function install(app) {
     const { account, params: p } = ctx;
     const invoices = account.store.list('invoice', (i) => {
       const sub = i.parent?.subscription_details?.subscription ?? null;
+      if (i._deleted) return false;
       if (p.customer !== undefined && i.customer !== p.customer) return false;
       if (p.subscription !== undefined && sub !== p.subscription) return false;
       // Test-clock invoices appear only with a customer or subscription clause.
@@ -395,6 +487,10 @@ export function install(app) {
     });
     return paginate(invoices, p, { url: '/v1/invoices', noun: 'invoice', find: (id) => account.store.get('invoice', id) });
   });
+
+  app.route('POST', '/v1/invoices', (c) => createManualInvoice(c.account, c.params), { returns: 'invoice' });
+  app.route('POST', '/v1/invoices/:id', (c) => updateInvoice(c.account, c.account.store.require('invoice', c.pathParams.id), c.params), { returns: 'invoice' });
+  app.route('DELETE', '/v1/invoices/:id', (c) => deleteDraftInvoice(c.account, c.account.store.require('invoice', c.pathParams.id)), { returns: 'deleted_invoice' });
 
   app.route('GET', '/v1/invoices/:id', (ctx) => ctx.account.store.require('invoice', ctx.pathParams.id));
 

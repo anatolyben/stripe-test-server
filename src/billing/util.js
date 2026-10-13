@@ -238,3 +238,16 @@ export function defaultPaymentMethodFor(account, invoice, subscription, customer
 export function hasPaymentMethod(account, subscription, customer) {
   return Boolean(defaultPaymentMethodFor(account, null, subscription, customer));
 }
+
+/** Extend a decimal amount exactly, then round to a minor unit, half away from zero.
+ * Stripe documents line-level rounding; its negative tie rule is not specified (see README).
+ */
+export function extendedDecimalAmount(unit, quantity) {
+  const value = String(unit);
+  const negative = value.startsWith('-');
+  const [whole, fraction = ''] = value.replace(/^-/, '').split('.');
+  const scale = 10n ** BigInt(fraction.length);
+  const extended = BigInt(whole + fraction) * BigInt(quantity);
+  const rounded = (extended + scale / 2n) / scale;
+  return Number(negative ? -rounded : rounded);
+}

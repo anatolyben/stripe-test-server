@@ -55,6 +55,9 @@ function deepProblems(obj, type, version, opts = {}) {
   if (type === 'subscription' && obj?.items?.data) {
     obj.items.data.forEach((item, i) => problems.push(...shapeProblems(item, 'subscription_item', version, { where: `${where}.items.data[${i}]` })));
   }
+  if (type === 'credit_note' && obj?.lines?.data) {
+    obj.lines.data.forEach((line, i) => problems.push(...shapeProblems(line, 'credit_note_line_item', version, { where: `${where}.lines.data[${i}]` })));
+  }
   if (type === 'invoice' && obj?.lines?.data) {
     obj.lines.data.forEach((line, i) => problems.push(...shapeProblems(line, 'line_item', version, { where: `${where}.lines.data[${i}]` })));
   }
@@ -97,6 +100,9 @@ async function world(version) {
   o.subscription = await stripe.subscriptions.retrieve(o.completedSession.subscription);
   o.subscriptionItem = await stripe.subscriptionItems.retrieve(o.subscription.items.data[0].id);
   o.invoice = await stripe.invoices.retrieve(o.subscription.latest_invoice);
+  o.invoiceItem = await stripe.invoiceItems.create({ customer: o.customer.id, currency: 'usd', unit_amount_decimal: '125.5', quantity: 2 });
+  o.creditNote = await stripe.creditNotes.create({ invoice: o.invoice.id, amount: 300, refund_amount: 300 });
+  o.refund = await stripe.refunds.retrieve(version === OLD ? o.creditNote.refund : o.creditNote.refunds[0].refund);
   o.invoiceLines = (await stripe.invoices.listLineItems(o.invoice.id)).data;
   o.schedule = await stripe.subscriptionSchedules.create({ from_subscription: o.subscription.id });
   // business_profile is required before 2024-10-28.acacia.
@@ -127,6 +133,9 @@ const CASES = [
   ['subscription', (o) => [['subscription', o.subscription]]],
   ['subscription_item', (o) => [['subscription_item', o.subscriptionItem]]],
   ['subscription_schedule', (o) => [['subscription_schedule', o.schedule]]],
+  ['invoiceitem', (o) => [['invoiceitem', o.invoiceItem]]],
+  ['credit_note', (o) => [['credit_note', o.creditNote]]],
+  ['refund', (o) => [['refund', o.refund]]],
   ['invoice', (o) => [['invoice', o.invoice]]],
   ['line_item', (o) => o.invoiceLines.map((line, i) => ['line_item', line, `invoices.listLineItems[${i}]`])],
   ['billing_portal.configuration', (o) => [['billing_portal.configuration', o.portalConfiguration]]],

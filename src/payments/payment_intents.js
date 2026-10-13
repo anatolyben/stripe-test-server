@@ -555,7 +555,10 @@ export function install(app) {
       'source_transfer',
     ],
     includable: {
-      refunds: (json) => ({ object: 'list', data: [], has_more: false, total_count: 0, url: `/v1/charges/${json.id}/refunds` }),
+      refunds: (json, ctx) => {
+        const refunds = ctx.account.store.list('refund', (r) => r.charge === json.id).sort((a, b) => b.created - a.created || b._seq - a._seq);
+        return { object: 'list', data: refunds.slice(0, 10).map((r) => ctx.render(r)), has_more: refunds.length > 10, total_count: refunds.length, url: `/v1/charges/${json.id}/refunds` };
+      },
     },
   });
 
@@ -563,3 +566,15 @@ export function install(app) {
   app.route('GET', '/v1/charges/:id', (ctx) => ctx.account.store.require('charge', ctx.pathParams.id));
 }
 
+/** Invoice owner asks the payment owner to resize an unpaid PaymentIntent after a credit note. */
+export function updateInvoicePaymentIntentAmount(account, pi, amount) {
+  if (['succeeded', 'canceled'].includes(pi.status)) throw unexpectedState(pi, 'resized');
+  pi.amount = amount;
+}
+
+/** Recompute successful/pending refund totals; failed and canceled refunds release capacity. */
+export function updateChargeRefunded(account, charge, { request, refundedEvent = false } = {}) {
+  charge.amount_refunded = account.store.list('refund', (r) => r.charge === charge.id && !['failed', 'canceled'].includes(r.status)).reduce((sum, r) => sum + r.amount, 0);
+  charge.refunded = charge.amount_refunded === charge.amount;
+  if (refundedEvent) emitEvent(account, 'charge.refunded', charge, { request });
+}

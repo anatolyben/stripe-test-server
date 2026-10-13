@@ -7,6 +7,7 @@ import { invalidRequest } from './errors.js';
 import { render } from './render.js';
 import { deleteCustomer, requireCustomer } from '../customers/customers.js';
 import { failNextCharge } from '../payments/payment_intents.js';
+import { failNextRefund } from '../payments/refunds.js';
 import { createSubscriptionForTest } from '../billing/engine.js';
 import {
   deliverDuplicate,
@@ -185,6 +186,14 @@ export function install(app) {
       if (!Number.isInteger(times) || times < 1) throw invalidRequest('times must be a positive integer', { param: 'times' });
       return failNextCharge(account, customer, { times, declineCode: input.declineCode ?? 'generic_decline' });
     },
+  });
+
+  app.control({
+    name: 'failNextRefund', method: 'POST', path: '/_test/fail_next_refund',
+    args: (customerId, opts = {}) => ({ ...opts, customer: customerId }),
+    handler: (account, input) => failNextRefund(account, requireString(input, 'customer'), {
+      times: input.times === undefined ? 1 : Number(input.times), failureReason: input.failureReason ?? 'declined',
+    }),
   });
 
   app.control({

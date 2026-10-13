@@ -141,7 +141,10 @@ Bodies are form-encoded, as the SDK sends them. Responses carry `Request-Id`, `S
 | Subscriptions             | create, retrieve, update, cancel (`DELETE`), resume, list                                              |
 | Subscription items        | retrieve, list                                                                                         |
 | Subscription schedules    | create (with `phases` or `from_subscription`), retrieve, update, cancel, release, list                 |
-| Invoices                  | retrieve, list, list lines, finalize, pay, void, mark uncollectible                                    |
+| Invoices                  | create, retrieve, update, delete drafts, list, list lines, finalize, pay, void, mark uncollectible                                    |
+| Invoice items             | create, retrieve, update, delete pending items, list                                                   |
+| Credit notes              | create, retrieve, update, list, list lines, void, preview, list preview lines                            |
+| Refunds                   | create, retrieve, update metadata, list, cancel when permitted                                          |
 | Invoice payments          | retrieve, list                                                                                         |
 | Billing portal            | configurations create, retrieve, update, list; sessions create (with `flow_data`)                       |
 | Test clocks               | create, retrieve, list, delete, advance                                                                |
@@ -173,6 +176,57 @@ prorations, `cancel_at_period_end`, `cancel_at`, pausing collection, pending upd
 both billing modes (`classic`, and `flexible`, the default from 2025-09-30.clover). Renewal
 invoices stay drafts for an hour, then finalize and charge the default card; failures retry on the
 account's `retrySchedule`, then cancel, go `unpaid` or stay `past_due`.
+
+### Invoice items, manual invoices, credit notes and refunds
+
+| Endpoint | Calls and supported inputs |
+| --- | --- |
+| `/v1/invoiceitems` | POST create; GET list (`customer`, `invoice`, `pending`). Create takes `customer`, `currency`, either `amount` or `unit_amount_decimal` with `quantity`, plus `description`, `metadata`, `period`, `discountable`, `invoice` or `subscription`. Legacy `unit_amount` is accepted before basil. |
+| `/v1/invoiceitems/:id` | GET retrieve; POST update amounts, quantity, description, metadata, period or discountable; DELETE a pending item. Items attached to finalized invoices cannot be edited. |
+| `/v1/invoices` | POST create a draft with `customer` (or a `subscription` identifying its customer), `subscription`, `auto_advance`, `pending_invoice_items_behavior`, `description`, `metadata`, `currency`, `collection_method`, `days_until_due` or `default_payment_method`; GET list (`customer`, `subscription`, and the existing invoice filters). |
+| `/v1/invoices/:id` | POST update description, metadata, auto advancement or default card; collection method and due terms can change while draft. DELETE a draft and its attached items. The existing finalize, pay, void and mark-uncollectible calls apply to manual invoices too. |
+| `/v1/credit_notes` | POST create with `invoice`, either `lines` or `amount`, `credit_amount`, `refund_amount`, `out_of_band_amount`, `reason`, `memo`, `metadata` or `effective_at`; GET list (`invoice`, `customer`). Existing refunds can be linked with `refund` before basil or `refunds` from basil. |
+| `/v1/credit_notes/:id` | GET retrieve; POST update `memo` or `metadata`. `POST …/void` voids an issued credit note while its invoice is open. `GET …/lines` lists the note's lines. |
+| `/v1/credit_notes/preview`, `/v1/credit_notes/preview/lines` | GET with the creation inputs previews a note or paginates its lines. Previews create no objects, refunds, balance credits or events. |
+| `/v1/refunds` | POST create with either `charge` or `payment_intent`, optional `amount` (default: the remaining refundable amount), `reason` and `metadata`; GET list (`charge`, `payment_intent`). Only successful captured card charges can be refunded. |
+| `/v1/refunds/:id` | GET retrieve; POST update `metadata`; `POST …/cancel` accepts only `requires_action`. This package's card refunds do not naturally reach that state, so their cancel calls are refused. |
+
+All lists accept `limit`, `starting_after` and `ending_before`, and return `has_more`. All POSTs
+use the shared idempotency contract, including invoice-item creation, invoice creation and refunds.
+
+An item without `invoice` stays pending. With `subscription`, it is collected by that
+subscription's next renewal or trial-end invoice, including after a test-clock advance. Without
+`subscription`, it goes on the customer's next scheduled invoice of the same currency. A manual
+invoice defaults to `pending_invoice_items_behavior: 'exclude'`; `include` attaches the customer's
+pending items, or only that subscription's items when `subscription` is supplied. Attachment sets
+the item's `invoice` and creates a line on the invoice; the hosted invoice page displays the lines.
+
+Draft creation defaults to `auto_advance: false`. With it enabled, automatic finalization and card
+collection use the existing one-hour draft window, default-card priority and retry schedule.
+Finalizing early leaves an open invoice until that collection time; `invoices.pay` pays immediately.
+Disabling auto advancement stops finalization and retries. The final retry can mark a standalone
+invoice uncollectible; subscription cancellation or `unpaid` settings apply when there is a subscription.
+
+Credit notes require an open or paid invoice. An `invoice_line_item` credit uses the line ID and
+either an amount or a quantity; successive credits cannot switch between these modes or exceed
+the uncredited line. A `custom_line_item` uses a description, quantity and unit amount. Negative
+credits are supported for negative invoice lines when the note's total remains positive.
+Pre-payment credits reduce `amount_due` and `amount_remaining`, and update the unpaid
+PaymentIntent. A fully credited open invoice becomes paid without a charge. Post-payment credits
+leave those amounts and `amount_paid` intact and increase `post_payment_credit_notes_amount`.
+Refund, customer-balance and out-of-band allocations must sum to the post-payment portion.
+Customer-balance credits apply to later invoices through the existing balance handling.
+
+At 2024-06-20, `credit_note.refund` is one nullable refund ID; from basil, `refunds` holds entries
+with `refund` and `amount_refunded`. Clover adds `pre_payment_amount`, `post_payment_amount` and
+mixed credits. Invoice items and lines use the existing legacy `price`/`plan` and later `pricing`
+and `parent` shapes. Credit-note PDFs, like invoice PDFs here, are plain text.
+
+The shared signed webhook delivery carries `invoiceitem.created`, `.updated`, `.deleted`,
+`credit_note.created`, `.updated`, `.voided`, `refund.created`, `.updated`, `.failed` and
+`charge.refunded`, plus the ordinary invoice and payment events. Retry, hold, release, duplicate,
+bad-signature and API-fault controls work with these resources too. `failNextRefund(customerId)`
+plays a failed refund; see [Test actions](#test-actions).
 
 ### Hosted pages
 
@@ -275,6 +329,7 @@ also an HTTP route under `/_test/` (next sections). Invalid input rejects with a
 | `billingSettings()`, `updateBillingSettings(patch)`                                    | The account's `{ retrySchedule, afterFinalRetry, markUncollectible }`.                                                             |
 | `deleteCustomer(customerId)`                                                           | Deletes a customer as the Dashboard would: its cards are detached, its subscriptions end, events carry `request: null`. Returns the deleted stub. |
 | `failNextCharge(customerId, { times?, declineCode? })`                                  | The next `times` (default 1) payment attempts for the customer are declined with `card_declined` and `declineCode` (default `generic_decline`; any Stripe decline code), whatever the card. `{ customer, remaining, declineCode }` |
+| `failNextRefund(customerId, { times?, failureReason? })` | The next `times` (default 1) refunds for the customer's charges fail with `failureReason` (default `declined`). Returns `{ customer, remaining, failureReason }`. Supported reasons: `declined`, `expired_or_canceled_card`, `insufficient_funds`, `lost_or_stolen_card`, `unknown`. |
 | `createSubscription(customerId, { price, quantity?, trialDays?, paymentMethod? })`     | Creates a live subscription directly, e.g. a second one next to a Checkout signup. Without `paymentMethod` (an ID or `pm_card_*` alias) it charges the customer's default card, else the card of their newest subscription, else their newest card. Returns the subscription. |
 | `setWebhookEndpoints([{ url, secret, apiVersion? }])`                                   | Replaces this account's control-added endpoints; server-wide and API-created ones stay. Returns the endpoint records.             |
 | `webhooks.deliveries({ eventId?, eventType?, endpointId?, status?, kind?, limit? })`    | Delivery records, oldest first, each with every attempt: time, URL, signature timestamp, response status and the first 2000 characters of the response. |
@@ -335,6 +390,7 @@ query string) and returns JSON. Refusals use Stripe's error envelope: 401 for a 
 | `GET billing_settings`, `POST billing_settings` | `billingSettings`, `updateBillingSettings`           |
 | `POST delete_customer`                       | `deleteCustomer` `{ customer }`                         |
 | `POST fail_next_charge`                      | `failNextCharge` `{ customer, times?, declineCode? }`   |
+| `POST fail_next_refund`                      | `failNextRefund` `{ customer, times?, failureReason? }` |
 | `POST create_subscription`                   | `createSubscription` `{ customer, price, quantity?, trialDays?, paymentMethod? }` |
 | `PUT webhook_endpoints`                      | `setWebhookEndpoints` `{ endpoints: [...] }`            |
 | `GET webhooks/deliveries`                    | `webhooks.deliveries` `?eventId=&eventType=&endpointId=&status=&kind=&limit=` |
@@ -459,7 +515,7 @@ on `type`, `code` and `param`.
 - **`business_name`, `individual_name`**: returned from 2025-09-30.clover, and only when set.
 - **Includable customer fields**: `tax` is `{ automatic_tax: 'unrecognized_location',
   ip_address: null, location: null }` (plus `provider: 'stripe'` from clover); `cash_balance` is
-  null, `invoice_credit_balance` `{}`, `sources` and `tax_ids` empty lists. Tax and balances are
+  null, `invoice_credit_balance` `{}`, `sources` and `tax_ids` empty lists. Tax, cash balances and per-currency balance summaries are
   not modelled.
 - **Legacy sources** (`source`, `card`, `default_source`): refused with 400.
 - **Products**: a taken custom `id` is 400 `resource_already_exists`; deleting a product with prices
@@ -499,7 +555,7 @@ on `type`, `code` and `param`.
   decline `payment_method` is null and the card stays in `last_payment_error.payment_method`;
   `last_payment_error` is null while `requires_action`.
 - **Charges**: `balance_transaction`, `receipt_url` and `calculated_statement_descriptor` are null,
-  and `refunds` is an empty list when expanded. A declined charge's `outcome` is
+  and `refunds` lists the charge's refunds when expanded. A declined charge's `outcome` is
   `issuer_declined`, `network_status: declined_by_network`, the decline code as `reason` and
   "The bank returned the decline code `<reason>`." as `seller_message`. `charge.*` events come
   before `payment_intent.*` events.
@@ -685,6 +741,46 @@ on `type`, `code` and `param`.
 - **Invoice lines from basil**: still carry the nullable top-level `subscription`, as the spec lists
   it.
 
+### Billing adjustments
+
+- **Decimal invoice-item amounts**: multiply `unit_amount_decimal` by quantity exactly, then round
+  the line to the nearest integer minor unit, with half ties away from zero. For example,
+  `0.05 × 30` becomes 2 and `-0.5 × 3` becomes -2. Stripe's
+  [rounding example](https://docs.stripe.com/products-prices/manage-prices#rounding) establishes
+  line-level rounding after multiplication and the positive half tie. It does not specify the
+  negative tie or every non-tie case; nearest/half-away is this server's rule, not a verified
+  guarantee about all Stripe amounts. Decimal multiplication uses integer arithmetic to avoid
+  floating-point changes at the rounding boundary.
+- **Amount-only items**: quantity is 1, and combining `amount` with `quantity` is refused. Such
+  items have no catalog Price; legacy `price`/`plan` are null and later `pricing` has a unit amount
+  without price details. Stripe's examples use a Price and do not show the complete response to
+  every amount-only request. Customer, subscription and invoice currencies must agree here.
+- **Pending-item deletion**: this package supports deleting unattached pending items only.
+  [Stripe also permits deleting draft-attached items](https://docs.stripe.com/api/invoiceitems/delete);
+  that broader deletion API is outside this package's supported subset. Deleting a draft invoice
+  deletes its attached items. Attachment itself does not send `invoiceitem.updated`.
+- **Empty invoice currency**: use explicit currency, the subscription's, the included pending
+  items', the customer's, then USD. Mixed pending currencies are refused before attachment.
+- **Amount-only credit notes**: allocate the amount to positive uncredited invoice lines in invoice
+  order. The API reference does not document this allocation algorithm. Explicit `lines` avoids
+  depending on this choice. Credit-note totals never change the original invoice total or lines.
+- **Previews**: use stable `cn_preview` and `cnli_preview_<index>` placeholders; they consume no
+  IDs and have no downloadable PDF. Preview-line cursors are valid for the same proposed lines.
+  Stripe's documentation does not specify the lifetime or identity of preview IDs.
+- **Refund timing and events**: ordinary card refunds succeed immediately. A queued
+  `failNextRefund` emits `refund.created` with `pending`, then `refund.updated` and `refund.failed`
+  with `failed`, all during creation. Failed and canceled refunds do not reserve refundable
+  capacity. A credit note referencing a failed refund stays issued with its original invoice
+  credit; it does not silently undo the credit. Stripe reports issuer failures asynchronously;
+  this simulator compresses that delay. No pending-balance settlement is modelled.
+- **Cross-resource event order**: a successful refund emits `refund.created`, then `charge.refunded`;
+  a credit note's refund/balance and invoice changes precede `credit_note.created`. Exact ordering
+  across these resources is not guaranteed by Stripe's documentation. Delivery controls can
+  reorder the events.
+- **Version snapshots**: nullable refund customer/payment-method fields and credit-note line
+  metadata are emitted at 2026-08-26.dahlia, the latest verified spec. Their exact first monthly
+  appearance is not established here.
+
 ### Schedules and test clocks
 
 - **A schedule that starts at creation**: the subscription and its first invoice come first, then
@@ -763,10 +859,10 @@ on `type`, `code` and `param`.
   stays there; pay the invoice with another card instead.
 - **Endpoints outside the list in [API](#api)**, among them: search (`/search` on any resource),
   creating PaymentMethods (use the aliases), PaymentIntents and SetupIntents beyond retrieve,
-  refunds, disputes, balance and balance transactions, creating or updating subscription items
+  disputes, balance and balance transactions, creating or updating subscription items
   (`/v1/subscription_items` is retrieve and list only; change items through the subscription),
-  usage records and billing meters, creating, updating, deleting, sending or previewing invoices
-  (`/v1/invoices/create_preview`), invoice items, credit notes, quotes, customer sessions,
+  usage records and billing meters, sending or previewing invoices
+  (`/v1/invoices/create_preview`), quotes, customer sessions,
   customer balance transactions and cash balances, entitlements.
 - **Connect and Accounts v2**: `Stripe-Account`, `on_behalf_of`, `transfer_data`,
   application fees, `customer_account`: all refused with 400.
@@ -808,7 +904,7 @@ code is organized and how to add a resource.
 
 Two files are generated from Stripe's public OpenAPI specs
 ([github.com/stripe/openapi](https://github.com/stripe/openapi)) and committed, so the scripts only
-need to run when the server moves to a newer API version:
+need to run when supported operations or API versions change:
 
 - `src/schemas/params.js`, the request parameters of every operation with their version gates, by
   `scripts/build-param-schemas.mjs`: from `openapi/spec3.json` at nine tags from v1267

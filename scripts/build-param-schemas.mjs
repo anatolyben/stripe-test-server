@@ -3,8 +3,7 @@
  * Builds src/schemas/params.js: the request-parameter tree of every operation the server
  * implements, with the API-version gates each request is checked against.
  *
- * src/schemas/params.js is committed, so this script only needs to run when the server moves to a
- * newer Stripe API version. Its inputs are not in this repository. All of them come from Stripe's
+ * src/schemas/params.js is committed, so this script runs when supported operations or Stripe API versions change. Its inputs are not in this repository. All of them come from Stripe's
  * public OpenAPI repository, github.com/stripe/openapi (tags vNNNN; each tag's
  * openapi/spec3.json states its API version in `info.version`):
  *
@@ -69,6 +68,27 @@ const BASE_TAG = 'v2442';
 
 /** Operations outside the 45 in the params file, taken from the v2442 spec with the same extractor. */
 const EXTRA_OPERATIONS = [
+  "POST /v1/invoiceitems",
+  "GET /v1/invoiceitems",
+  "GET /v1/invoiceitems/{invoiceitem}",
+  "POST /v1/invoiceitems/{invoiceitem}",
+  "DELETE /v1/invoiceitems/{invoiceitem}",
+  "POST /v1/invoices",
+  "POST /v1/invoices/{invoice}",
+  "DELETE /v1/invoices/{invoice}",
+  "POST /v1/refunds",
+  "GET /v1/refunds",
+  "GET /v1/refunds/{refund}",
+  "POST /v1/refunds/{refund}",
+  "POST /v1/refunds/{refund}/cancel",
+  "POST /v1/credit_notes",
+  "GET /v1/credit_notes",
+  "GET /v1/credit_notes/{id}",
+  "POST /v1/credit_notes/{id}",
+  "POST /v1/credit_notes/{id}/void",
+  "GET /v1/credit_notes/{credit_note}/lines",
+  "GET /v1/credit_notes/preview",
+  "GET /v1/credit_notes/preview/lines",
   'GET /v1/customers',
   'GET /v1/products',
   'DELETE /v1/products/{id}',
@@ -99,6 +119,9 @@ const EXTRA_OPERATIONS = [
  * changelog and API reference). Keys are dotted parameter paths; `[]` steps into array items.
  */
 const ADDED_SINCE = {
+  'POST /v1/credit_notes': { refunds: '2025-03-31.basil' },
+  'GET /v1/credit_notes/preview': { refunds: '2025-03-31.basil' },
+  'GET /v1/credit_notes/preview/lines': { refunds: '2025-03-31.basil' },
   'POST /v1/subscriptions': { billing_schedules: '2026-05-27.dahlia', billing_mode: '2025-06-30.basil' },
   'POST /v1/subscriptions/{subscription_exposed_id}': { billing_schedules: '2026-05-27.dahlia' },
   'POST /v1/subscription_schedules': { billing_mode: '2025-06-30.basil' },
@@ -152,6 +175,9 @@ const SERVER_OPEN_ENUMS = {
  * this server always requires because Accounts v2 (`customer_account`) is not modelled.
  */
 const REQUIRED_OVERLAYS = {
+  'POST /v1/invoiceitems': ['customer'],
+  'GET /v1/credit_notes/preview': ['invoice'],
+  'GET /v1/credit_notes/preview/lines': ['invoice'],
   'POST /v1/checkout/sessions': ['mode'],
   'POST /v1/subscriptions': ['items', 'customer'],
   'POST /v1/billing_portal/sessions': ['customer'],

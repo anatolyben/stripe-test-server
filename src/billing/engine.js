@@ -1689,7 +1689,11 @@ export function onPaymentFailure(account, invoice, o) {
     const customer = account.store.get('customer', invoice.customer);
     if (customer && !customer.delinquent) changeCustomer(account, customer, (c) => { c.delinquent = true; }, { request });
   }
-  if (!sub || ENDED_STATUSES.has(sub.status)) return;
+  if (!sub) {
+    if (final && settings.markUncollectible && invoice.status === 'open') inv.markUncollectible(account, invoice, { request, byDunning: true });
+    return;
+  }
+  if (ENDED_STATUSES.has(sub.status)) return;
   if (mode === 'automatic' || mode === 'update') toPastDue(account, sub, { request });
   if (final) applyFinalRetryAction(account, sub, invoice, { request });
 }
@@ -1745,7 +1749,7 @@ function renew(account, sub, at) {
     autoAdvance: !draftOnly,
     daysUntilDue: sub.days_until_due,
   });
-  for (const ii of inv.sortPending(inv.pendingInvoiceItems(account, sub.id))) inv.attachInvoiceItem(account, invoice, ii);
+  for (const ii of inv.sortPending(inv.pendingInvoiceItems(account, sub.id, { includeCustomer: true }))) inv.attachInvoiceItem(account, invoice, ii);
   renewed.sort((a, b) => b.item.created - a.item.created || a.item._seq - b.item._seq);
   for (const r of renewed) {
     inv.addSubscriptionLine(account, invoice, {
@@ -1831,7 +1835,7 @@ function trialEndJob(account, job) {
     autoAdvance: true,
     daysUntilDue: sub.days_until_due,
   });
-  for (const ii of inv.sortPending(inv.pendingInvoiceItems(account, sub.id))) inv.attachInvoiceItem(account, invoice, ii);
+  for (const ii of inv.sortPending(inv.pendingInvoiceItems(account, sub.id, { includeCustomer: true }))) inv.attachInvoiceItem(account, invoice, ii);
   for (const l of lines) {
     inv.addSubscriptionLine(account, invoice, {
       subscription: sub,

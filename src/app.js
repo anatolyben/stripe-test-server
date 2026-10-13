@@ -10,11 +10,14 @@ import * as products from './catalog/products.js';
 import * as prices from './catalog/prices.js';
 import * as paymentMethods from './payments/payment_methods.js';
 import * as paymentIntents from './payments/payment_intents.js';
+import * as refunds from './payments/refunds.js';
 import * as checkoutSessions from './checkout/sessions.js';
 import * as checkoutPage from './checkout/checkout_page.js';
 import * as billingEngine from './billing/engine.js';
 import * as subscriptions from './billing/subscriptions.js';
 import * as invoices from './billing/invoices.js';
+import * as invoiceItems from './billing/invoice_items.js';
+import * as creditNotes from './billing/credit_notes.js';
 import * as invoicePage from './billing/invoice_page.js';
 import * as schedules from './schedules/schedules.js';
 import * as portalConfigurations from './portal/configurations.js';
@@ -33,11 +36,14 @@ export const MODULES = [
   prices,
   paymentMethods,
   paymentIntents,
+  refunds,
   checkoutSessions,
   checkoutPage,
   billingEngine,
   subscriptions,
   invoices,
+  invoiceItems,
+  creditNotes,
   invoicePage,
   schedules,
   portalConfigurations,
