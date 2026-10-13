@@ -6,16 +6,29 @@ deterministic (the same steps give the same IDs) and is driven by the official
 `new Stripe(key, { host: '127.0.0.1', port, protocol: 'http' })` and your code runs unchanged.
 
 It covers the subscription lifecycle end to end: customers, products and prices, Checkout in
-subscription mode, subscriptions and their invoices, schedules, the customer portal, test clocks,
-the events API and signed webhooks. The Checkout, portal and invoice pages are plain HTML forms your
-test can submit. Time is yours to move: trials end, renewals charge, failed payments retry and
+subscription mode, subscriptions and their invoices, invoice items, credit notes, refunds, schedules,
+the customer portal, test clocks, the events API and signed webhooks. The Checkout, portal and
+invoice pages are plain HTML forms your test can submit. Time is yours to move: trials end, renewals charge, failed payments retry and
 subscriptions cancel when the clock passes. Your test also plays everything else: declined cards,
-API faults, and webhooks that arrive late, twice, out of order or badly signed.
+failed refunds, API faults, and webhooks that arrive late, twice, out of order or badly signed.
 
 Nothing here talks to Stripe, so tests need no Stripe account, API keys or network. Any
 `sk_test_…` key works, and each key is its own account.
 
 Not affiliated with, endorsed by, or sponsored by Stripe, Inc. Stripe is a trademark of Stripe, Inc.
+
+## New in 0.1.1
+
+- Invoice-item creation, retrieval, updates, pending-item deletion and filtered lists. Pending
+  items appear on renewal invoices, including renewals reached by advancing a test clock.
+- Draft invoice creation, updates and deletion, with pending-item inclusion, default-card
+  payments and the existing automatic payment retry controls.
+- Credit notes, line-item previews, customer-balance credits and refunds linked to paid invoices.
+- Refund creation, retrieval, metadata updates and filtered lists, plus `failNextRefund` for
+  testing failure handling. All new events use the existing signed webhook delivery controls.
+
+See [the Billing endpoints](#invoice-items-manual-invoices-credit-notes-and-refunds) for supported
+parameters and [Billing adjustments](#billing-adjustments) for rounding rules and fidelity limits.
 
 ## Install
 
