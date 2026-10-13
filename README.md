@@ -17,6 +17,15 @@ Nothing here talks to Stripe, so tests need no Stripe account, API keys or netwo
 
 Not affiliated with, endorsed by, or sponsored by Stripe, Inc. Stripe is a trademark of Stripe, Inc.
 
+## New in 0.1.2
+
+- Refund failures now happen after creation. `failNextRefund` makes the next refund return
+  `pending`, then fail after `delaySeconds` (default 60) on the customer's clock, with signed
+  `refund.updated` and `refund.failed` events. Advance account time or the customer's test clock
+  to exercise failure handling without waiting.
+- Updating a draft invoice's collection method reconciles automatic collection. Switching to
+  `send_invoice` clears `next_payment_attempt` and keeps automatic finalization without charging.
+
 ## New in 0.1.1
 
 - Invoice-item creation, retrieval, updates, pending-item deletion and filtered lists. Pending
@@ -239,7 +248,21 @@ The shared signed webhook delivery carries `invoiceitem.created`, `.updated`, `.
 `credit_note.created`, `.updated`, `.voided`, `refund.created`, `.updated`, `.failed` and
 `charge.refunded`, plus the ordinary invoice and payment events. Retry, hold, release, duplicate,
 bad-signature and API-fault controls work with these resources too. `failNextRefund(customerId)`
-plays a failed refund; see [Test actions](#test-actions).
+queues a failure: the next refund creation returns `pending` and the refund fails later;
+see [Test actions](#test-actions). For a customer without a test clock:
+
+```js
+await account.failNextRefund(customer.id, { delaySeconds: 60 });
+const refund = await stripe.refunds.create({ charge: charge.id, amount: 500 });
+// refund.status === 'pending'; no refund.failed event has been emitted yet.
+await account.advanceTime({ seconds: 60 });
+await server.settle(); // wait for signed refund.updated and refund.failed webhook deliveries
+const failed = await stripe.refunds.retrieve(refund.id); // status: 'failed'
+```
+
+For a customer on a Stripe test clock, advance that clock instead of `account.advanceTime`.
+The failure uses the customer's clock, including the event timestamp. An idempotent replay
+returns the original pending response; retrieve the refund to read its current status.
 
 ### Hosted pages
 
@@ -342,7 +365,7 @@ also an HTTP route under `/_test/` (next sections). Invalid input rejects with a
 | `billingSettings()`, `updateBillingSettings(patch)`                                    | The account's `{ retrySchedule, afterFinalRetry, markUncollectible }`.                                                             |
 | `deleteCustomer(customerId)`                                                           | Deletes a customer as the Dashboard would: its cards are detached, its subscriptions end, events carry `request: null`. Returns the deleted stub. |
 | `failNextCharge(customerId, { times?, declineCode? })`                                  | The next `times` (default 1) payment attempts for the customer are declined with `card_declined` and `declineCode` (default `generic_decline`; any Stripe decline code), whatever the card. `{ customer, remaining, declineCode }` |
-| `failNextRefund(customerId, { times?, failureReason? })` | The next `times` (default 1) refunds for the customer's charges fail with `failureReason` (default `declined`). Returns `{ customer, remaining, failureReason }`. Supported reasons: `declined`, `expired_or_canceled_card`, `insufficient_funds`, `lost_or_stolen_card`, `unknown`. |
+| `failNextRefund(customerId, { times?, failureReason?, delaySeconds? })` | The next `times` (default 1) refunds for the customer's charges return `pending`, then fail with `failureReason` (default `declined`) after `delaySeconds` (default 60, positive integer) on the customer's clock. Returns `{ customer, remaining, failureReason, delaySeconds }`. Supported reasons: `declined`, `expired_or_canceled_card`, `insufficient_funds`, `lost_or_stolen_card`, `unknown`. |
 | `createSubscription(customerId, { price, quantity?, trialDays?, paymentMethod? })`     | Creates a live subscription directly, e.g. a second one next to a Checkout signup. Without `paymentMethod` (an ID or `pm_card_*` alias) it charges the customer's default card, else the card of their newest subscription, else their newest card. Returns the subscription. |
 | `setWebhookEndpoints([{ url, secret, apiVersion? }])`                                   | Replaces this account's control-added endpoints; server-wide and API-created ones stay. Returns the endpoint records.             |
 | `webhooks.deliveries({ eventId?, eventType?, endpointId?, status?, kind?, limit? })`    | Delivery records, oldest first, each with every attempt: time, URL, signature timestamp, response status and the first 2000 characters of the response. |
@@ -403,7 +426,7 @@ query string) and returns JSON. Refusals use Stripe's error envelope: 401 for a 
 | `GET billing_settings`, `POST billing_settings` | `billingSettings`, `updateBillingSettings`           |
 | `POST delete_customer`                       | `deleteCustomer` `{ customer }`                         |
 | `POST fail_next_charge`                      | `failNextCharge` `{ customer, times?, declineCode? }`   |
-| `POST fail_next_refund`                      | `failNextRefund` `{ customer, times?, failureReason? }` |
+| `POST fail_next_refund`                      | `failNextRefund` `{ customer, times?, failureReason?, delaySeconds? }` |
 | `POST create_subscription`                   | `createSubscription` `{ customer, price, quantity?, trialDays?, paymentMethod? }` |
 | `PUT webhook_endpoints`                      | `setWebhookEndpoints` `{ endpoints: [...] }`            |
 | `GET webhooks/deliveries`                    | `webhooks.deliveries` `?eventId=&eventType=&endpointId=&status=&kind=&limit=` |
@@ -781,11 +804,18 @@ on `type`, `code` and `param`.
   IDs and have no downloadable PDF. Preview-line cursors are valid for the same proposed lines.
   Stripe's documentation does not specify the lifetime or identity of preview IDs.
 - **Refund timing and events**: ordinary card refunds succeed immediately. A queued
-  `failNextRefund` emits `refund.created` with `pending`, then `refund.updated` and `refund.failed`
-  with `failed`, all during creation. Failed and canceled refunds do not reserve refundable
-  capacity. A credit note referencing a failed refund stays issued with its original invoice
-  credit; it does not silently undo the credit. Stripe reports issuer failures asynchronously;
-  this simulator compresses that delay. No pending-balance settlement is modelled.
+  `failNextRefund` emits `refund.created` with `pending` and returns that status. After
+  `delaySeconds` on the customer's clock, it emits `refund.updated` and `refund.failed` with
+  `failed`; these automatic events have null request IDs. The 60-second default is a simulator
+  choice. [Stripe documents asynchronous issuer failures](https://docs.stripe.com/refunds#failed-refunds),
+  with variable timing; no fixed delay or exact ordering between failure events is guaranteed.
+  Pending refunds reserve refundable capacity and count toward the charge's `amount_refunded`
+  and `refunded`; failure recomputes these fields without removing other refunds. Stripe's
+  documentation does not fully specify these charge fields during pending-to-failed transitions,
+  so this is the accounting rule used here. Failed and canceled refunds release capacity.
+  A credit note referencing a failed refund stays issued with its original invoice credit;
+  this existing simulator choice is not established by Stripe's documentation. No balance
+  transactions or pending-balance settlement are modelled.
 - **Cross-resource event order**: a successful refund emits `refund.created`, then `charge.refunded`;
   a credit note's refund/balance and invoice changes precede `credit_note.created`. Exact ordering
   across these resources is not guaranteed by Stripe's documentation. Delivery controls can

@@ -1,6 +1,6 @@
 {
   "name": "stripe-test-server",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A local test server for Stripe Billing: customers, prices, Checkout, subscriptions, schedules, invoices, invoice items, credit notes, refunds, the customer portal, test clocks and signed webhooks, for testing with the official stripe SDK",
   "license": "MIT",
   "author": "Anatoly Ben",

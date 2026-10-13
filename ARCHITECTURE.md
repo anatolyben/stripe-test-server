@@ -318,7 +318,8 @@ account.time.cancel(key); account.time.cancelWhere((job) => ...); account.time.l
 Job kinds registered today: billing `subscription.renewal`, `.trial_end`, `.trial_will_end`,
 `.cancel_at`, `.incomplete_expire`, `.pause_collection_resume`, `.pending_update_expire`,
 `.resume_expire`, `invoice.finalize`, `.payment_retry`, `.payment_attempt`, `.due`; schedules
-`subscription_schedule.start`, `.phase_end`, `.expiring`; Checkout `checkout.session.expire`.
+`subscription_schedule.start`, `.phase_end`, `.expiring`; Checkout `checkout.session.expire`;
+refunds `refund.fail`.
 
 ### Test clocks
 
@@ -590,7 +591,7 @@ account lock unless `lock: false`.
 | `billingSettings()` / `updateBillingSettings(patch)` | `GET` / `POST /_test/billing_settings` | `{ retrySchedule?, afterFinalRetry?, markUncollectible? }` → settings | core |
 | `deleteCustomer(id)` | `POST /_test/delete_customer` | `{ customer }` → deleted stub | `customers.deleteCustomer` |
 | `failNextCharge(customerId, { times = 1, declineCode = 'generic_decline' })` | `POST /_test/fail_next_charge` | `{ customer, times, declineCode }` → `{ customer, remaining, declineCode }` | `payments.failNextCharge` |
-| `failNextRefund(customerId, { times = 1, failureReason = 'declined' })` | `POST /_test/fail_next_refund` | `{ customer, times, failureReason }` → `{ customer, remaining, failureReason }` | `payments/refunds.failNextRefund` |
+| `failNextRefund(customerId, { times = 1, failureReason = 'declined', delaySeconds = 60 })` | `POST /_test/fail_next_refund` | `{ customer, times, failureReason, delaySeconds }` → `{ customer, remaining, failureReason, delaySeconds }` | `payments/refunds.failNextRefund` |
 | `createSubscription(customerId, { price, quantity?, trialDays?, paymentMethod? })` | `POST /_test/create_subscription` | `{ customer, price, … }` → rendered subscription | `billing.createSubscriptionForTest` |
 | `setWebhookEndpoints([{ url, secret, apiVersion? }])` | `PUT /_test/webhook_endpoints` | `{ endpoints }` → endpoint records | webhooks |
 | `webhooks.deliveries(filter?)` | `GET /_test/webhooks/deliveries` | `{ eventId?, eventType?, endpointId?, status?, kind?, limit? }` → delivery records | webhooks |
@@ -682,7 +683,7 @@ Exact signatures and JSDoc are in the modules; this is the map. "→" = returns.
 - `payments/test_cards.js`: `TEST_CARDS` (entry shape in the file), `findTestCard(numberOrAlias)`, `findTestCardAlias`, `normalizeCardNumber`, `cardChargeOutcome`, `CARD_ERROR_MESSAGES`, `CARD_ERROR_PARAMS`, `DECLINE_CODES`.
 - `payments/payment_methods.js`: `attachPaymentMethod(account, ref, customer, { param, request })` (an alias mints a new PaymentMethod on every attach), `detachPaymentMethod(account, pm, { request })` (then runs the `payment_method.detached` hook), `requireAttachedPaymentMethod(account, id, customer, { param })`, `createCardPaymentMethod(account, card, { request, allowRedisplay = 'limited' })` (hosted-page cards count as set up for off-session use), `testCardOf(pm)`, `renderPaymentMethod`. Internal fields: `_card { number, setUp }`, `_detached`.
 - `payments/payment_intents.js`: `createPaymentIntent(account, spec, { request })`; `confirmPaymentIntent(account, pi, { paymentMethod, offSession = true }, { request, version })` → `{ ok, paymentIntent, charge, error }` (an unusable PaymentMethod gives `ok: false` with a 400 and leaves the PaymentIntent unchanged; only a PaymentIntent that is not open throws; pass `offSession: false` for on-session payments such as hosted pages); `cancelPaymentIntent`; `predictChargeFailure(account, { paymentMethod, customer, amount, currency, offSession = false, consume = false })` → null or `{ code, declineCode, message }` (`consume: true` uses up a queued `failNextCharge` failure it reports); `cardDeclineError(failure, { charge, paymentIntent, paymentMethod })` → the 402; `failNextCharge(account, customerId, { times, declineCode })`.
-- `payments/refunds.js`: `prepareRefund` validates without effects; `createRefund`, `updateRefund`, `cancelRefund`, `failNextRefund` and `renderRefund`. Charge refund totals are changed through `payment_intents.updateChargeRefunded`, which excludes failed/canceled refunds. Refund events use the shared event bus and signing/delivery pipeline.
+- `payments/refunds.js`: `prepareRefund` validates without effects; `createRefund`, `updateRefund`, `cancelRefund`, `failNextRefund` and `renderRefund`. Charge refund totals are changed through `payment_intents.updateChargeRefunded`, which excludes failed/canceled refunds. A queued failure creates a pending refund and schedules `refund.fail` in the customer's time domain. The handler re-reads the pending refund, changes it to failed, recomputes charge totals through the owner, and emits automatic `refund.updated` and `refund.failed` events. Refund events use the shared event bus and signing/delivery pipeline. Reset and test-clock deletion remove jobs through the time engine.
 - `checkout/sessions.js`: `completeSession(account, session, { paymentMethod, card?, email, name, phone, address, shipping, businessName, individualName, customFields, consent, quantities, optionalItems })`, `createSession`, `expireSession`, `amountDueToday`, `finalLineItems`, `hasTrial`, `renderSession`, `renderItem`.
 - `checkout/pricing.js` (amounts through the billing engine's `amountFor`, labels, yearly cost) and `checkout/page_kit.js` (card fields, `readCardForm`, notices, styles) serve every hosted page.
 

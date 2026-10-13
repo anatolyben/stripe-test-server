@@ -306,8 +306,8 @@ export interface AccountControls {
    * `declineCode` (default "generic_decline"), whatever the card.
    */
   failNextCharge(customerId: string, opts?: { times?: number; declineCode?: string }): Promise<FailNextChargeResult>;
-  /** The next card refunds for this customer fail during creation, with refund.failed events. */
-  failNextRefund(customerId: string, opts?: { times?: number; failureReason?: 'declined' | 'expired_or_canceled_card' | 'insufficient_funds' | 'lost_or_stolen_card' | 'unknown' }): Promise<{ customer: string; remaining: number; failureReason: string }>;
+  /** The next card refunds return pending and fail after delaySeconds (default 60) on the customer clock, emitting refund.failed. */
+  failNextRefund(customerId: string, opts?: { times?: number; delaySeconds?: number; failureReason?: 'declined' | 'expired_or_canceled_card' | 'insufficient_funds' | 'lost_or_stolen_card' | 'unknown' }): Promise<{ customer: string; remaining: number; failureReason: string; delaySeconds: number }>;
   /**
    * Creates a live subscription directly (e.g. a second one), bypassing Checkout. Without
    * `paymentMethod` it charges the customer's default card, else the card of their newest

@@ -30,7 +30,7 @@ export function prepareRefund(account, p) {
   return { charge, amount, reason: p.reason ?? null, metadata: applyMetadata({}, p.metadata) };
 }
 
-/** Inserts a validated refund. A queued failure goes pending → failed during this call. */
+/** Inserts a validated refund. A queued failure stays pending until its time-engine job runs. */
 export function createRefund(account, p, { request } = {}) {
   for (const key of Object.keys(p)) if (!['charge', 'payment_intent', 'amount', 'reason', 'metadata', 'expand'].includes(key)) throw invalidRequest(`Refund parameter ${key} is not modelled.`, { param: key });
   const prepared = prepareRefund(account, p);
@@ -46,14 +46,25 @@ export function createRefund(account, p, { request } = {}) {
     status: failure ? 'pending' : 'succeeded', _failureReason: null,
   });
   emitEvent(account, 'refund.created', refund, { request, domain: account.time.domainOf(charge) });
-  if (failure) {
-    updateWithEvent(account, refund, 'refund.updated', () => {
-      refund.status = 'failed';
-      refund._failureReason = failure;
-    }, { request, domain: account.time.domainOf(charge) });
-    emitEvent(account, 'refund.failed', refund, { request, domain: account.time.domainOf(charge) });
-  } else updateChargeRefunded(account, charge, { request, refundedEvent: true });
+  updateChargeRefunded(account, charge, { request, refundedEvent: true });
+  if (failure) account.time.schedule({
+    kind: 'refund.fail', at: refund.created + failure.delaySeconds,
+    domain: account.time.domainOf(charge), key: `${refund.id}:fail`,
+    data: { refund: refund.id, failureReason: failure.failureReason },
+  });
   return refund;
+}
+
+/** Completes an issuer failure outside the API request, in the customer's time domain. */
+function failRefund(account, job) {
+  const refund = account.store.get('refund', job.data.refund);
+  if (!refund || refund.status !== 'pending') return;
+  updateWithEvent(account, refund, 'refund.updated', () => {
+    refund.status = 'failed';
+    refund._failureReason = job.data.failureReason;
+  }, { domain: job.domain });
+  updateChargeRefunded(account, account.store.get('charge', refund.charge));
+  emitEvent(account, 'refund.failed', refund, { domain: job.domain });
 }
 
 export function updateRefund(account, refund, p, { request } = {}) {
@@ -75,13 +86,14 @@ export function cancelRefund(account, refund, { request } = {}) {
   return refund;
 }
 
-export function failNextRefund(account, customerId, { times = 1, failureReason = 'declined' } = {}) {
+export function failNextRefund(account, customerId, { times = 1, failureReason = 'declined', delaySeconds = 60 } = {}) {
   requireCustomer(account, customerId);
   if (!Number.isSafeInteger(times) || times < 1) throw invalidParam('times', 'times must be a positive integer.');
   if (!FAILURE_REASONS.includes(failureReason)) throw invalidParam('failureReason', 'Unknown refund failure reason.');
+  if (!Number.isSafeInteger(delaySeconds) || delaySeconds < 1) throw invalidParam('delaySeconds', 'delaySeconds must be a positive integer.');
   const queue = stateOf(account).failNext[customerId] ??= [];
-  for (let i = 0; i < times; i++) queue.push(failureReason);
-  return { customer: customerId, remaining: queue.length, failureReason };
+  for (let i = 0; i < times; i++) queue.push({ failureReason, delaySeconds });
+  return { customer: customerId, remaining: queue.length, failureReason, delaySeconds };
 }
 
 export function renderRefund(r, ctx) {
@@ -98,6 +110,7 @@ export function renderRefund(r, ctx) {
 }
 
 export function install(app) {
+  app.job('refund.fail', failRefund);
   app.object('refund', { render: renderRefund,
     expandable: ['charge', 'payment_intent', 'balance_transaction', 'failure_balance_transaction', 'source_transfer_reversal', 'transfer_reversal', 'customer', 'payment_method'],
     links: { charge: 'charge', payment_intent: 'payment_intent', customer: { to: 'customer', since: '2026-08-26.dahlia' }, payment_method: { to: 'payment_method', since: '2026-08-26.dahlia' } },

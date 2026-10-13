@@ -371,20 +371,21 @@ export function updateInvoice(account, invoice, p, { request } = {}) {
   if (['paid', 'void', 'uncollectible'].includes(invoice.status) && p.auto_advance === true) throw invalidRequest('A terminal invoice cannot be advanced automatically.', { param: 'auto_advance' });
   const method = p.collection_method ?? invoice.collection_method;
   if (p.days_until_due !== undefined && method !== 'send_invoice') throw invalidParam('days_until_due', 'Only send_invoice supports days_until_due.');
+  const methodChanged = method !== invoice.collection_method;
   updateWithEvent(account, invoice, 'invoice.updated', () => {
     if (p.description !== undefined) invoice.description = p.description || null;
     invoice.metadata = metadata;
     if (p.default_payment_method !== undefined) invoice.default_payment_method = p.default_payment_method || null;
     if (p.collection_method !== undefined) invoice.collection_method = p.collection_method;
     if (p.days_until_due !== undefined) invoice._daysUntilDue = p.days_until_due;
-    if (p.auto_advance !== undefined) {
-      invoice.auto_advance = p.auto_advance;
+    if (p.auto_advance !== undefined) invoice.auto_advance = p.auto_advance;
+    if (p.auto_advance !== undefined || methodChanged) {
       account.time.cancel(`${invoice.id}:finalize`);
       account.time.cancel(`${invoice.id}:attempt`);
       account.time.cancel(`${invoice.id}:retry`);
       invoice.automatically_finalizes_at = null;
       invoice.next_payment_attempt = null;
-      if (p.auto_advance && ['draft', 'open'].includes(invoice.status)) {
+      if (invoice.auto_advance && ['draft', 'open'].includes(invoice.status)) {
         const at = Math.max(nowOf(account, invoice), invoice.created + DRAFT_WINDOW_SECONDS);
         const draft = invoice.status === 'draft';
         if (draft) invoice.automatically_finalizes_at = at;

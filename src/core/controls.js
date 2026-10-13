@@ -193,6 +193,7 @@ export function install(app) {
     args: (customerId, opts = {}) => ({ ...opts, customer: customerId }),
     handler: (account, input) => failNextRefund(account, requireString(input, 'customer'), {
       times: input.times === undefined ? 1 : Number(input.times), failureReason: input.failureReason ?? 'declined',
+      delaySeconds: input.delaySeconds === undefined ? 60 : Number(input.delaySeconds),
     }),
   });
 

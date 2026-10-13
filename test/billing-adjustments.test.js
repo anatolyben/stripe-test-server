@@ -145,6 +145,20 @@ describe('manual invoices', () => {
     expect(await rejection(t.stripe.invoices.update(draft.id, { collection_method: 'send_invoice' }))).toMatchObject({ statusCode: 400 });
   });
 
+  it('reconciles automatic collection when a draft changes collection method', async () => {
+    const t = await setup({ clock: true });
+    const draft = await t.stripe.invoices.create({ customer: t.customer.id, auto_advance: true });
+    await t.stripe.invoiceItems.create({ customer: t.customer.id, invoice: draft.id, amount: 100, currency: 'usd' });
+    expect(draft.next_payment_attempt).toBe(draft.created + HOUR);
+    const sent = await t.stripe.invoices.update(draft.id, { collection_method: 'send_invoice', days_until_due: 7 });
+    expect(sent).toMatchObject({ auto_advance: true, next_payment_attempt: null, automatically_finalizes_at: draft.automatically_finalizes_at });
+    expect(await t.stripe.invoices.update(draft.id, { collection_method: 'charge_automatically' })).toMatchObject({ next_payment_attempt: draft.created + HOUR });
+    await t.stripe.invoices.update(draft.id, { collection_method: 'send_invoice' });
+    await t.stripe.testHelpers.testClocks.advance(t.testClock.id, { frozen_time: draft.created + HOUR });
+    expect(await t.stripe.invoices.retrieve(draft.id)).toMatchObject({ status: 'open', next_payment_attempt: null, amount_paid: 0, attempted: false });
+    expect(await events(t, 'charge.*')).toEqual([]);
+  });
+
   it('deletes drafts and attached items and refuses deletion of finalized invoices', async () => {
     const t = await setup();
     const draft = await t.stripe.invoices.create({ customer: t.customer.id, auto_advance: true });
@@ -418,21 +432,67 @@ describe('billing adjustment webhooks and refund failure', () => {
     expect((await t.stripe.charges.retrieve(charge)).amount_refunded).toBe(200);
   });
 
-  it('fails the next refund, sends refund.failed and permits retrying the released amount', async () => {
-    const hooks = await webhookReceiver();
-    const t = await setup({ options: { webhooks: [{ url: hooks.url, secret: SECRET }] } });
+  it('fails a pending refund later, delivers signed retryable events and releases the reserved amount', async () => {
+    let failureAttempts = 0;
+    const hooks = await webhookReceiver({ status: (d) => d.json.type === 'refund.failed' && ++failureAttempts === 1 ? 500 : 200 });
+    const t = await setup({ options: { webhooks: [{ url: hooks.url, secret: SECRET }], webhookRetry: { delaysMs: [5], timeoutMs: 1000 } } });
     const { charge } = await paidInvoice(t);
-    expect(await t.account.failNextRefund(t.customer.id)).toMatchObject({ customer: t.customer.id, remaining: 1 });
-    const failed = await t.stripe.refunds.create({ charge, amount: 600 });
-    expect(failed).toMatchObject({ status: 'failed', failure_reason: 'declined' });
-    expect((await t.stripe.refunds.retrieve(failed.id)).status).toBe('failed');
-    expect((await t.stripe.charges.retrieve(charge)).amount_refunded).toBe(0);
+    expect(await t.account.failNextRefund(t.customer.id)).toMatchObject({ customer: t.customer.id, remaining: 1, delaySeconds: 60 });
+    const pending = await t.stripe.refunds.create({ charge, amount: 600 });
+    expect(pending.status).toBe('pending');
+    expect(pending).not.toHaveProperty('failure_reason');
+    expect((await t.stripe.refunds.retrieve(pending.id)).status).toBe('pending');
+    expect((await t.stripe.charges.retrieve(charge)).amount_refunded).toBe(600);
+    expect(await rejection(t.stripe.refunds.create({ charge, amount: 1500 }))).toMatchObject({ param: 'amount' });
+    expect(await rejection(t.stripe.refunds.cancel(pending.id))).toMatchObject({ statusCode: 400 });
     await t.server.settle();
-    const failure = hooks.deliveries.map((d) => t.stripe.webhooks.constructEvent(d.rawBody, d.headers['stripe-signature'], SECRET)).find((e) => e.type === 'refund.failed');
-    expect(failure.data.object).toMatchObject({ id: failed.id, status: 'failed', amount: 600 });
-    expect((await t.stripe.refunds.create({ charge })).amount).toBe(2000);
-    expect((await t.request('POST', '/_test/fail_next_refund', { json: { customer: t.customer.id, times: 0 } })).status).toBe(400);
-    expect((await t.request('POST', '/_test/fail_next_refund', { json: { customer: t.customer.id } })).json.remaining).toBe(1);
+    expect(hooks.deliveries.some((d) => d.json.type === 'refund.failed')).toBe(false);
+    await t.stripe.refunds.create({ charge, amount: 400 });
+    expect((await t.stripe.charges.retrieve(charge)).amount_refunded).toBe(1000);
+    await t.account.webhooks.hold();
+    await t.account.advanceTime({ seconds: 61 });
+    expect(await t.stripe.refunds.retrieve(pending.id)).toMatchObject({ status: 'failed', failure_reason: 'declined' });
+    expect((await t.stripe.charges.retrieve(charge)).amount_refunded).toBe(400);
+    expect(hooks.deliveries.some((d) => d.json.type === 'refund.failed')).toBe(false);
+    await t.account.webhooks.release();
+    await t.server.settle();
+    const delivered = hooks.deliveries.map((d) => t.stripe.webhooks.constructEvent(d.rawBody, d.headers['stripe-signature'], SECRET));
+    const failure = delivered.find((e) => e.type === 'refund.failed');
+    expect(failure).toMatchObject({ created: pending.created + 60, request: { id: null, idempotency_key: null }, data: { object: { id: pending.id, status: 'failed', amount: 600, failure_reason: 'declined' } } });
+    expect(delivered.find((e) => e.type === 'refund.created')).toMatchObject({ data: { object: { status: 'pending' } } });
+    expect(delivered.find((e) => e.type === 'refund.updated')).toMatchObject({ request: { id: null, idempotency_key: null }, data: { previous_attributes: { status: 'pending' }, object: { status: 'failed' } } });
+    expect(failureAttempts).toBe(2);
+    expect((await t.stripe.refunds.create({ charge })).amount).toBe(1600);
+    for (const params of [{ times: 0 }, { delaySeconds: 0 }, { delaySeconds: 1.5 }, { failureReason: 'invalid' }]) {
+      expect((await t.request('POST', '/_test/fail_next_refund', { json: { customer: t.customer.id, ...params } })).status).toBe(400);
+    }
+    expect((await t.request('POST', '/_test/fail_next_refund', { json: { customer: t.customer.id, delaySeconds: 30 } })).json).toMatchObject({ remaining: 1, delaySeconds: 30 });
+  });
+
+  it('uses the customer test clock and keeps idempotency from consuming another queued failure', async () => {
+    const t = await setup({ version: OLD, clock: true });
+    const { charge } = await paidInvoice(t);
+    await t.account.failNextRefund(t.customer.id, { times: 2, delaySeconds: 30, failureReason: 'lost_or_stolen_card' });
+    expect(await rejection(t.stripe.refunds.create({ charge, amount: 3000 }))).toMatchObject({ param: 'amount' });
+    const params = { charge, amount: 1000 };
+    const pending = await t.stripe.refunds.create(params, { idempotencyKey: 'delayed-refund' });
+    expect(pending.status).toBe('pending');
+    expect((await t.stripe.refunds.create(params, { idempotencyKey: 'delayed-refund' })).id).toBe(pending.id);
+    await t.account.advanceTime({ seconds: 60 });
+    await t.stripe.testHelpers.testClocks.advance(t.testClock.id, { frozen_time: pending.created + 29 });
+    expect((await t.stripe.refunds.retrieve(pending.id)).status).toBe('pending');
+    await t.stripe.refunds.update(pending.id, { metadata: { order: 'kept' } });
+    await t.stripe.testHelpers.testClocks.advance(t.testClock.id, { frozen_time: pending.created + 30 });
+    expect(await t.stripe.refunds.retrieve(pending.id)).toMatchObject({ status: 'failed', failure_reason: 'lost_or_stolen_card', metadata: { order: 'kept' } });
+    expect((await t.stripe.refunds.create(params, { idempotencyKey: 'delayed-refund' })).status).toBe('pending');
+    const second = await t.stripe.refunds.create({ charge });
+    expect(second).toMatchObject({ status: 'pending', amount: 2000 });
+    expect((await t.stripe.charges.retrieve(charge)).refunded).toBe(true);
+    await t.stripe.testHelpers.testClocks.advance(t.testClock.id, { frozen_time: second.created + 30 });
+    expect(await t.stripe.charges.retrieve(charge)).toMatchObject({ amount_refunded: 0, refunded: false });
+    expect(await events(t, 'refund.failed')).toHaveLength(2);
+    await t.stripe.testHelpers.testClocks.advance(t.testClock.id, { frozen_time: second.created + 100 });
+    expect(await events(t, 'refund.failed')).toHaveLength(2);
   });
 });
 
@@ -510,6 +570,8 @@ describe('billing accounting edges', () => {
     const { invoice, charge } = await paidInvoice(t);
     await t.account.failNextRefund(t.customer.id);
     const note = await t.stripe.creditNotes.create({ invoice: invoice.id, amount: 300, refund_amount: 300 });
+    expect((await t.stripe.refunds.retrieve(note.refund)).status).toBe('pending');
+    await t.account.advanceTime({ seconds: 61 });
     expect((await t.stripe.refunds.retrieve(note.refund)).status).toBe('failed');
     expect((await t.stripe.invoices.retrieve(invoice.id)).post_payment_credit_notes_amount).toBe(300);
     expect((await t.stripe.charges.retrieve(charge)).amount_refunded).toBe(0);
