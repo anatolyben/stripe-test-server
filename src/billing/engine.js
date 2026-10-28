@@ -840,18 +840,7 @@ export function updateSubscription(account, sub, u, opts = {}) {
 
   // Billing effects of an item change.
   const paused = sub.status === 'paused';
-  let resetAnchor = false;
-  if (!trialing && !paused && !moveTrial) {
-    if (u.billingCycleAnchor === 'now') resetAnchor = true;
-    else if (itemPlan && !flexible && itemPlan.changedStates.length) {
-      const oldPrices = itemPlan.states.map((s) => s.oldPrice);
-      const newPrices = itemPlan.next.map((s) => s.price);
-      const intervalChanged = !sameInterval(oldPrices[0], newPrices[0]);
-      const oldTotal = itemPlan.states.reduce((sum, s) => sum + amountFor(s.oldPrice, s.oldQuantity ?? 1), 0);
-      const newTotal = itemPlan.next.reduce((sum, s) => sum + amountFor(s.price, s.quantity ?? 1), 0);
-      resetAnchor = intervalChanged || (oldTotal === 0 && newTotal > 0);
-    }
-  }
+  const resetAnchor = !trialing && !paused && !moveTrial && anchorResets(sub, itemPlan, u.billingCycleAnchor);
 
   // Proration invoice items (specs; created when applied).
   const prorations = [];
@@ -860,21 +849,7 @@ export function updateSubscription(account, sub, u, opts = {}) {
     prorations.push({ state, amount, credit, start, end, ...extra });
   };
   if (itemPlan && !trialing && !paused && !moveTrial && prorationBehavior !== 'none') {
-    if (resetAnchor) {
-      for (const s of itemPlan.states) {
-        pushProration(s, -prorate(creditBase(sub, s), s.item.current_period_start, s.item.current_period_end, t), true, t, s.item.current_period_end);
-      }
-    } else {
-      for (const s of itemPlan.changedStates) {
-        if (s.item) {
-          pushProration(s, -prorate(creditBase(sub, s), s.item.current_period_start, s.item.current_period_end, t), true, t, s.item.current_period_end);
-        }
-        if (!s.deleted) {
-          const p = newItemPeriod(account, sub, s, t);
-          pushProration(s, prorate(amountFor(s.price, s.quantity ?? 1), p.start, p.end, t), false, t, p.end);
-        }
-      }
-    }
+    prorations.push(...itemProrations(account, sub, itemPlan, { t, resetAnchor }));
   } else if (!itemPlan && resetAnchor && prorationBehavior !== 'none') {
     for (const item of sub.items.data) {
       const state = { item, price: priceOf(account, item), quantity: item.quantity, oldPrice: priceOf(account, item), oldQuantity: item.quantity };
@@ -1067,6 +1042,44 @@ export function updateSubscription(account, sub, u, opts = {}) {
   return { subscription: sub, invoice, paymentError };
 }
 
+/**
+ * Whether an update starts a new billing period now: billing_cycle_anchor=now, or (classic) an
+ * items change to another interval or from free to paid. The caller excludes trials and pauses.
+ */
+function anchorResets(sub, itemPlan, billingCycleAnchor) {
+  if (billingCycleAnchor === 'now') return true;
+  if (!itemPlan || sub.billing_mode.type === 'flexible' || !itemPlan.changedStates.length) return false;
+  const intervalChanged = !sameInterval(itemPlan.states[0].oldPrice, itemPlan.next[0].price);
+  const oldTotal = itemPlan.states.reduce((sum, s) => sum + amountFor(s.oldPrice, s.oldQuantity ?? 1), 0);
+  const newTotal = itemPlan.next.reduce((sum, s) => sum + amountFor(s.price, s.quantity ?? 1), 0);
+  return intervalChanged || (oldTotal === 0 && newTotal > 0);
+}
+
+/**
+ * The prorations of an items change at `t`: a credit for the unused time of each changed (or, on
+ * an anchor reset, every) item and a debit for the time left on each new price, by the second.
+ * Zero amounts are dropped. Shared by updates and previews, so both compute the same amounts.
+ */
+function itemProrations(account, sub, itemPlan, { t, resetAnchor }) {
+  const out = [];
+  const push = (state, amount, credit, start, end) => {
+    if (amount) out.push({ state, amount, credit, start, end });
+  };
+  const credit = (s) => push(s, -prorate(creditBase(sub, s), s.item.current_period_start, s.item.current_period_end, t), true, t, s.item.current_period_end);
+  if (resetAnchor) {
+    for (const s of itemPlan.states) credit(s);
+    return out;
+  }
+  for (const s of itemPlan.changedStates) {
+    if (s.item) credit(s);
+    if (!s.deleted) {
+      const p = newItemPeriod(account, sub, s, t);
+      push(s, prorate(amountFor(s.price, s.quantity ?? 1), p.start, p.end, t), false, t, p.end);
+    }
+  }
+  return out;
+}
+
 /** The period a changed or added item gets: its interval's anchor-aligned period containing `t`. */
 function newItemPeriod(account, sub, state, t) {
   if (state.item && state.oldPrice && sameInterval(state.price, state.oldPrice)) {
@@ -1128,6 +1141,124 @@ function createProrationItems(account, sub, customer, prorations) {
     if (p.forCancelAt) ii._forCancelAt = true;
     return ii;
   });
+}
+
+// Previews --------------------------------------------------------------------------------------
+
+/** invoice_upcoming_none: there is nothing to preview (docs.stripe.com/error-codes#invoice-upcoming-none). */
+function noUpcomingInvoice(customer) {
+  return invalidRequest(`No upcoming invoices for customer: ${customer.id}`, { code: 'invoice_upcoming_none' });
+}
+
+/**
+ * The invoice POST /v1/invoices/create_preview returns for an update of `sub` (items,
+ * proration_behavior, proration_date), with the proration rules of updateSubscription, so a
+ * preview and an update with the same proration_date agree to the cent. Nothing is stored or
+ * emitted and no account ID is minted: the preview has its own upcoming_in_ / il_tmp_ IDs.
+ *
+ * When the update would invoice right away (always_invoice with prorations, or a new billing
+ * period) this is that invoice. Otherwise it is the subscription's next invoice: pending invoice
+ * items, the update's prorations (create_prorations) and the next period of every item, so a
+ * trialing subscription previews its first paid period.
+ *
+ * @param {object} u { items?, prorationBehavior?, prorationDate? } (prices as internal objects)
+ */
+export function previewSubscriptionUpdate(account, sub, u) {
+  const customer = customerOf(account, sub);
+  if (ENDED_STATUSES.has(sub.status) || sub.status === 'paused') throw noUpcomingInvoice(customer);
+  guardUpdatable(sub, u);
+  const now = nowOf(account, sub);
+  const prorationBehavior = u.prorationBehavior ?? 'create_prorations';
+  const period = currentPeriod(sub);
+  if (u.prorationDate !== undefined && (u.prorationDate < period.start || u.prorationDate > period.end)) {
+    throw invalidRequest('proration_date must be within the current period of the subscription items.', { param: 'subscription_details[proration_date]' });
+  }
+  const t = u.prorationDate ?? now;
+  const itemPlan = u.items ? planItems(account, sub, u.items, { param: 'subscription_details[items]' }) : null;
+  const trialing = sub.status === 'trialing';
+  const resetAnchor = !trialing && anchorResets(sub, itemPlan, undefined);
+  const prorations = itemPlan && !trialing && prorationBehavior !== 'none' ? itemProrations(account, sub, itemPlan, { t, resetAnchor }) : [];
+  const immediate = resetAnchor || (prorationBehavior === 'always_invoice' && prorations.length > 0);
+  const nextStates = itemPlan ? itemPlan.next : sub.items.data.map((item) => ({ item, price: priceOf(account, item), quantity: item.quantity }));
+
+  const invoice = inv.newInvoice(account, {
+    id: account.ids.next('upcoming_in'),
+    customer,
+    subscription: sub,
+    billingReason: immediate ? 'subscription_update' : 'upcoming',
+    collectionMethod: sub.collection_method,
+    currency: sub.currency,
+    now: immediate ? now : period.end,
+    periodStart: immediate ? now : period.start,
+    periodEnd: immediate ? now : period.end,
+    autoAdvance: !immediate,
+    daysUntilDue: sub.days_until_due,
+    prorationDate: u.prorationDate,
+    preview: true,
+  });
+  const lineId = () => account.ids.next('il_tmp');
+
+  // Invoice items in invoice order (sortPending): the update's prorations would be the newest.
+  const sweep = !immediate || resetAnchor || sub.billing_mode.type === 'flexible';
+  const pending = sweep ? inv.pendingInvoiceItems(account, sub.id, { includeCustomer: !immediate }) : [];
+  const fresh = prorations.map((p, i) => ({ date: now, _seq: Number.MAX_SAFE_INTEGER - prorations.length + i, proration: p }));
+  for (const entry of inv.sortPending([...pending, ...fresh])) {
+    if (!entry.proration) {
+      inv.addInvoiceItemLine(account, invoice, entry, { id: lineId() });
+      continue;
+    }
+    const p = entry.proration;
+    const price = p.credit ? p.state.oldPrice : p.state.price;
+    const quantity = (p.credit ? p.state.oldQuantity : p.state.quantity) ?? 1;
+    const debit = p.state.item?._lastDebit;
+    inv.addSubscriptionLine(account, invoice, {
+      id: lineId(),
+      subscription: sub,
+      item: p.state.item ? { id: p.state.item.id } : null,
+      price,
+      quantity,
+      amount: p.amount,
+      start: p.start,
+      end: p.end,
+      description: prorationDescription(account, price, quantity, p.start, p.credit),
+      proration: true,
+      discountable: false,
+      fromInvoiceItem: true,
+      creditedItems: p.credit && debit ? { invoice: debit.invoice, invoice_line_items: [debit.line] } : null,
+    });
+  }
+
+  // Subscription lines: the new period of an anchor reset, else each item's next period.
+  const subscriptionLine = (s, amount, start, end, proration) => inv.addSubscriptionLine(account, invoice, {
+    id: lineId(),
+    subscription: sub,
+    item: s.item ? { id: s.item.id } : null,
+    price: s.price,
+    quantity: s.quantity,
+    amount,
+    start,
+    end,
+    proration,
+    description: proration ? prorationDescription(account, s.price, s.quantity, start, false) : subscriptionLineDescription(account, s.price, s.quantity),
+  });
+  if (resetAnchor) {
+    for (const s of [...nextStates].reverse()) subscriptionLine(s, amountFor(s.price, s.quantity ?? 1), now, oneIntervalAfter(s.price, now), false);
+  } else if (!immediate && !(sub.cancel_at !== null && sub.cancel_at <= period.end)) {
+    const renewing = [];
+    for (const s of nextStates) {
+      const unchanged = !itemPlan || (s.item && s.price.id === s.oldPrice.id);
+      const start = unchanged ? s.item.current_period_end : trialing ? period.end : newItemPeriod(account, sub, s, t).end;
+      if (start > period.end) continue;
+      const end = periodEndBefore(sub, nextItemBoundary(s.price, sub.billing_cycle_anchor, start), start);
+      renewing.push({ s, start, end, charge: periodCharge(s.price, s.quantity ?? 1, sub.billing_cycle_anchor, start, end) });
+    }
+    // Renewals list the newest item first; a trial's end lists them in item order.
+    const created = (r) => r.s.item?.created ?? Number.MAX_SAFE_INTEGER;
+    if (!trialing) renewing.sort((a, b) => created(b) - created(a) || (a.s.item?._seq ?? 0) - (b.s.item?._seq ?? 0));
+    for (const r of renewing) subscriptionLine(r.s, r.charge.amount, r.start, r.end, r.charge.proration);
+  }
+  if (!invoice.lines.data.length) throw noUpcomingInvoice(customer);
+  return inv.computeTotals(account, invoice);
 }
 
 /** Scalar and hash fields of an update that need no billing logic. */

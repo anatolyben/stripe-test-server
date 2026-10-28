@@ -694,6 +694,7 @@ request).
 
 - `createSubscription(account, spec, { source: 'api'|'checkout'|'schedule'|'control', version, request, beforeApply })` → `{ subscription, invoice, paymentError }` (spec keys are camelCase and take internal price objects; `beforeApply` runs once every check has passed, right before the first change)
 - `updateSubscription(account, sub, update, { source: 'api'|'portal'|'schedule', request, beforeApply })` → `{ subscription, invoice, paymentError }` (the one code path of every subscription change)
+- `previewSubscriptionUpdate(account, sub, { items, prorationBehavior, prorationDate })` → an unstored invoice (`upcoming_in_…`, lines `il_tmp_…`) for `POST /v1/invoices/create_preview`; it shares `itemProrations` and `anchorResets` with `updateSubscription`, so a preview and an update at the same `proration_date` agree, and it stores, emits and mints nothing on the account's ID sequences
 - `changeSubscriptionItems(account, sub, { items, prorationBehavior, prorationDate, billingCycleAnchor, paymentBehavior, trialEnd, trialUpdateBehavior }, { source, request })`
 - `setCancelAtPeriodEnd(account, sub, value, { source, cancellationDetails, request })`
 - `setCancelAt(account, sub, cancelAt, { source, request })`

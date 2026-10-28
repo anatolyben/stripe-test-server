@@ -3,7 +3,8 @@
  *
  * Routes: POST /v1/subscriptions, GET /v1/subscriptions, GET /v1/subscriptions/:id,
  * POST /v1/subscriptions/:id, DELETE /v1/subscriptions/:id, POST /v1/subscriptions/:id/resume,
- * GET /v1/subscription_items, GET /v1/subscription_items/:id.
+ * GET /v1/subscription_items, GET /v1/subscription_items/:id, and POST /v1/invoices/create_preview
+ * for an update of an existing subscription.
  * Objects: 'subscription' (2024-06-20 has subscription-level current_period_start/end and
  * `discount`; billing_mode from 2025-06-30.basil; billing_schedules from 2026-05-27.dahlia),
  * 'subscription_item' (item-level periods from 2025-03-31.basil; embedded `price` and the legacy
@@ -18,6 +19,7 @@ import {
   cancelSubscription,
   createSubscription,
   currentPeriod,
+  previewSubscriptionUpdate,
   resumeSubscription,
   updateSubscription,
 } from './engine.js';
@@ -326,6 +328,55 @@ function updateSpec(ctx, sub) {
   return { u, resolved };
 }
 
+/**
+ * Converts validated POST /v1/invoices/create_preview params into a preview of a subscription
+ * update. Modelled: subscription (customer optional, must own it) with subscription_details items,
+ * proration_behavior and proration_date; everything else is rejected as unsupported.
+ */
+function previewSpec(ctx) {
+  const { account, params: p } = ctx;
+  if (p.customer_account !== undefined) throw unsupported('customer_account', 'The customer_account parameter (Accounts v2)');
+  for (const key of ['automatic_tax', 'currency', 'customer_details', 'invoice_items', 'issuer', 'on_behalf_of', 'schedule', 'schedule_details']) {
+    if (p[key] !== undefined && p[key] !== '') throw unsupported(key, `Previewing an invoice with ${key}`);
+  }
+  if (p.coupon !== undefined && p.coupon !== '') throw resourceMissing('coupon', p.coupon, { param: 'coupon' });
+  rejectDiscounts(p.discounts, 'discounts');
+  if (p.preview_mode === 'recurring') throw unsupported('preview_mode', 'preview_mode=recurring');
+  if (p.subscription === undefined) {
+    throw unsupported('subscription', "Previewing without a subscription (a new subscription, or a customer's next invoice)");
+  }
+  const sub = account.store.get('subscription', p.subscription);
+  if (!sub) throw resourceMissing('subscription', p.subscription, { param: 'subscription' });
+  if (p.customer !== undefined) {
+    account.store.require('customer', p.customer, { param: 'customer' });
+    if (p.customer !== sub.customer) throw invalidRequest(`The subscription ${sub.id} does not belong to the customer ${p.customer}.`, { param: 'customer' });
+  }
+  const d = p.subscription_details ?? {};
+  const P = (key) => `subscription_details[${key}]`;
+  for (const key of Object.keys(d)) {
+    if (!['items', 'proration_behavior', 'proration_date'].includes(key)) throw unsupported(P(key), `Previewing subscription_details[${key}]`);
+  }
+  if (d.proration_date !== undefined) {
+    if (!d.items) throw parameterMissing(P('items'));
+    if (d.proration_behavior === 'none') {
+      throw invalidRequest("subscription_details[proration_behavior] cannot be set to 'none' when subscription_details[proration_date] is set.", { param: P('proration_behavior') });
+    }
+  }
+  const items = d.items?.map((e, i) => {
+    const param = `${P('items')}[${i}]`;
+    rejectDiscounts(e.discounts, `${param}[discounts]`);
+    for (const key of ['billing_thresholds', 'clear_usage', 'current_trial']) {
+      if (e[key] !== undefined && e[key] !== '') throw unsupported(`${param}[${key}]`, `Previewing ${key} on items`);
+    }
+    if (e.tax_rates !== undefined && e.tax_rates !== '' && e.tax_rates.length) throw resourceMissing('tax_rate', e.tax_rates[0], { param: `${param}[tax_rates][0]` });
+    const r = resolveItemPrice(ctx, e, param, { recurring: true, required: false });
+    const current = e.id ? sub.items.data.find((it) => it.id === e.id) : null;
+    checkQuantity(r.price ?? (current ? account.store.get('price', current.price) : null), e.quantity, `${param}[quantity]`);
+    return { id: e.id, deleted: e.deleted, quantity: e.quantity, metadata: e.metadata, param, price: r.price ?? undefined };
+  });
+  return { sub, u: { items, prorationBehavior: d.proration_behavior, prorationDate: d.proration_date } };
+}
+
 // Serializers -----------------------------------------------------------------------------------
 
 /** The legacy `plan` object derived from a recurring price (docs.stripe.com/api/plans/object). */
@@ -581,6 +632,12 @@ export function install(app) {
       prorationBehavior: p.proration_behavior,
       prorationDate: p.proration_date,
     });
+  });
+
+  // A preview is rendered, never stored: the price_data drafts it resolves are not materialized.
+  app.route('POST', '/v1/invoices/create_preview', (ctx) => {
+    const { sub, u } = previewSpec(ctx);
+    return previewSubscriptionUpdate(ctx.account, sub, u);
   });
 
   app.route('GET', '/v1/subscription_items', (ctx) => {

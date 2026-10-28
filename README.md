@@ -17,6 +17,17 @@ Nothing here talks to Stripe, so tests need no Stripe account, API keys or netwo
 
 Not affiliated with, endorsed by, or sponsored by Stripe, Inc. Stripe is a trademark of Stripe, Inc.
 
+## New in 0.2.0
+
+- `POST /v1/invoices/create_preview` (`stripe.invoices.createPreview`) previews an update of an
+  existing subscription: `subscription_details[items]`, `[proration_behavior]` and
+  `[proration_date]`. It returns an invoice shaped like Stripe's for the request's API version,
+  with the proration lines computed by the same code as `subscriptions.update`, so an update with
+  the same `proration_date` charges exactly the previewed amount. Nothing is stored or charged.
+- See [Previewing a plan change](#previewing-a-plan-change) for the mid-period upgrade recipe:
+  preview, then `always_invoice` with `error_if_incomplete` and an `Idempotency-Key`, and how to
+  make the card decline.
+
 ## New in 0.1.2
 
 - Refund failures now happen after creation. `failNextRefund` makes the next refund return
@@ -163,7 +174,7 @@ Bodies are form-encoded, as the SDK sends them. Responses carry `Request-Id`, `S
 | Subscriptions             | create, retrieve, update, cancel (`DELETE`), resume, list                                              |
 | Subscription items        | retrieve, list                                                                                         |
 | Subscription schedules    | create (with `phases` or `from_subscription`), retrieve, update, cancel, release, list                 |
-| Invoices                  | create, retrieve, update, delete drafts, list, list lines, finalize, pay, void, mark uncollectible                                    |
+| Invoices                  | create, retrieve, update, delete drafts, list, list lines, finalize, pay, void, mark uncollectible; `create_preview` of a subscription update |
 | Invoice items             | create, retrieve, update, delete pending items, list                                                   |
 | Credit notes              | create, retrieve, update, list, list lines, void, preview, list preview lines                            |
 | Refunds                   | create, retrieve, update metadata, list, cancel when permitted                                          |
@@ -694,6 +705,80 @@ on `type`, `code` and `param`.
 - **Login page**: opens a session for the most recent customer with that email and a live
   subscription (else the most recent with that email); no email is sent.
 
+### Previewing a plan change
+
+`POST /v1/invoices/create_preview` previews an update of an existing subscription, as
+`stripe.invoices.createPreview` sends it:
+
+| Parameter | Supported |
+| --- | --- |
+| `subscription` | Required; `customer` is optional and must own it. |
+| `subscription_details[items]` | `id`, `price` (or `price_data`), `quantity`, `deleted`, `metadata`, as on `subscriptions.update`. |
+| `subscription_details[proration_behavior]` | `create_prorations` (default), `always_invoice`, `none`. |
+| `subscription_details[proration_date]` | Within the current period, else 400 on that param; needs `items`, and not `proration_behavior=none`. |
+
+Everything else (`schedule`, `invoice_items`, `customer_details`, `automatic_tax`,
+`preview_mode=recurring`, other `subscription_details` fields, a preview without `subscription`) is
+refused with 400 and the param.
+
+What comes back:
+
+- **An invoice that is never stored**: `id` `upcoming_in_…`, lines `il_tmp_…`, `status: draft`.
+  It is not listed, cannot be retrieved, and the call creates no invoice items, PaymentIntents or
+  events and charges nothing.
+- **Prorations by the second**, exactly as `subscriptions.update` computes them for the same
+  `proration_date`: a negative "Unused time on …" line on the old price and a positive "Remaining
+  time on …" line on the new one, each with `proration: true` (from basil,
+  `parent.subscription_item_details.proration`) and `period` from `proration_date` to the item's
+  period end. `amount_due` applies the customer balance.
+- **Which invoice**: with `always_invoice` and prorations (or a classic interval change, which
+  resets the period) it is the invoice the update would create now (`billing_reason`
+  `subscription_update`, `period_start` = `period_end` = now). Otherwise it is the next invoice
+  (`billing_reason` `upcoming`, created at the period end): pending invoice items, the update's
+  prorations and each item's next period at its new price. A trialing subscription has no
+  prorations, so it previews its first paid period at the end of the trial; the update itself
+  charges nothing.
+- **No upcoming invoice** (canceled, ended or paused subscription, or one set to cancel at the period
+  end with nothing pending): 400 `invoice_upcoming_none`.
+
+A mid-period upgrade, with the charge pinned to the previewed amount:
+
+```js
+const prorationDate = Math.floor(Date.now() / 1000); // or the account clock in tests
+const preview = await stripe.invoices.createPreview({
+  customer: sub.customer,
+  subscription: sub.id,
+  subscription_details: {
+    items: [{ id: sub.items.data[0].id, price: newPriceId }],
+    proration_behavior: 'always_invoice',
+    proration_date: prorationDate,
+  },
+});
+// show preview.amount_due, then:
+const updated = await stripe.subscriptions.update(
+  sub.id,
+  {
+    items: [{ id: sub.items.data[0].id, price: newPriceId }],
+    proration_behavior: 'always_invoice',
+    proration_date: prorationDate,
+    payment_behavior: 'error_if_incomplete',
+  },
+  { idempotencyKey: `upgrade-${sub.id}-${prorationDate}` },
+);
+```
+
+- **The update** keeps `current_period_end` (no new billing cycle; a change to another interval
+  in classic mode does reset it), switches the item's price, and creates, finalizes and pays an
+  invoice for the previewed amount with the default card (the subscription's, else the
+  customer's).
+- **A decline** with `error_if_incomplete` answers 402 `card_error` / `card_declined` with the
+  `decline_code`, and the subscription, its invoices and its pending items are unchanged. Make the
+  card decline with `pm_card_chargeCustomerFail` as the default card (it attaches, then every
+  charge fails), or with `failNextCharge(customerId, { declineCode })` for the next attempt only.
+- **Retries**: the same `Idempotency-Key` and body replays the saved response (the 200, or the
+  402) with `Idempotent-Replayed: true` and charges nothing; the same key with another body is 400
+  `idempotency_error` (see [Idempotency](#api)).
+
 ### Subscriptions and invoices
 
 - **Event order of a direct create that charges**: `customer.subscription.created` (`incomplete`),
@@ -904,8 +989,9 @@ on `type`, `code` and `param`.
   creating PaymentMethods (use the aliases), PaymentIntents and SetupIntents beyond retrieve,
   disputes, balance and balance transactions, creating or updating subscription items
   (`/v1/subscription_items` is retrieve and list only; change items through the subscription),
-  usage records and billing meters, sending or previewing invoices
-  (`/v1/invoices/create_preview`), quotes, customer sessions,
+  usage records and billing meters, sending invoices, invoice previews other than of a
+  subscription update (of a new subscription, a schedule, a customer's next invoice, or
+  `preview_mode=recurring`), quotes, customer sessions,
   customer balance transactions and cash balances, entitlements.
 - **Connect and Accounts v2**: `Stripe-Account`, `on_behalf_of`, `transfer_data`,
   application fees, `customer_account`: all refused with 400.
@@ -927,6 +1013,8 @@ on `type`, `code` and `param`.
   seconds. Stripe delivers concurrently, in no guaranteed order, and retries over hours.
 - Validation runs in a fixed order and each refusal has one `code` and `param`; Stripe may answer a
   different one for the same request. Message texts differ from Stripe's.
+- Proration lines of an invoice preview have `invoice_item: null` (Stripe shows the IDs of invoice
+  items it has not created); a preview's `customer` is optional but never chosen for you.
 - Charges have no balance transactions, receipts or statement descriptors, and nothing settles.
 - Only versions from 2024-06-20 are modelled; older ones use 2024-06-20 shapes. 2026-09-30.endive
   is refused.

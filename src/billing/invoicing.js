@@ -72,7 +72,8 @@ export function pendingInvoiceItems(account, subscriptionId, { includeCustomer =
 /**
  * A new draft invoice (not stored yet).
  * @param {object} o { id?, customer, subscription?, billingReason, collectionMethod, currency, now,
- *   periodStart, periodEnd, autoAdvance, daysUntilDue?, prorationDate? }
+ *   periodStart, periodEnd, autoAdvance, daysUntilDue?, prorationDate?, preview? } preview: an
+ *   invoice that is only rendered (create_preview), so it gets no hosted-page token
  */
 export function newInvoice(account, o) {
   const { customer, subscription } = o;
@@ -158,7 +159,7 @@ export function newInvoice(account, o) {
     _paymentIntent: null,
     _charge: null,
     _payments: [],
-    _token: account.mintId('test'),
+    _token: o.preview ? null : account.mintId('test'),
     _paidOutOfBand: false,
     _dunningUncollectible: false,
     _lastFailure: null,
@@ -169,11 +170,13 @@ export function newInvoice(account, o) {
 /**
  * Appends a subscription line (type "subscription" at 2024-06-20).
  * @param {object} l { subscription, item, price, quantity, amount, start, end, description,
- *   proration?, discountable?, invoiceItem? (ii_ for proration lines), creditedItems? }
+ *   proration?, discountable?, invoiceItem? (ii_ for proration lines), creditedItems?, id?,
+ *   fromInvoiceItem? (a preview's proration line: an invoice item line without an ii_ yet) }
  */
 export function addSubscriptionLine(account, invoice, l) {
+  const fromInvoiceItem = l.fromInvoiceItem ?? Boolean(l.invoiceItem);
   const line = {
-    id: account.mintId('il'),
+    id: l.id ?? account.mintId('il'),
     object: 'line_item',
     amount: l.amount,
     currency: invoice.currency,
@@ -184,7 +187,7 @@ export function addSubscriptionLine(account, invoice, l) {
     invoice: invoice.id,
     livemode: false,
     // Subscription lines reflect the subscription's metadata; proration lines carry their invoice item's.
-    metadata: l.invoiceItem ? { ...(l.metadata ?? {}) } : { ...(l.subscription?.metadata ?? {}) },
+    metadata: fromInvoiceItem ? { ...(l.metadata ?? {}) } : { ...(l.subscription?.metadata ?? {}) },
     parent: {
       invoice_item_details: null,
       subscription_item_details: {
@@ -207,9 +210,9 @@ export function addSubscriptionLine(account, invoice, l) {
     subscription: l.subscription?.id ?? null,
     subtotal: l.amount,
     taxes: [],
-    _type: l.invoiceItem ? 'invoiceitem' : 'subscription',
+    _type: fromInvoiceItem ? 'invoiceitem' : 'subscription',
   };
-  if (!l.invoiceItem && l.item) {
+  if (!fromInvoiceItem && l.item) {
     // A full-period debit: remember it so a later credit proration can point at it.
     l.item._lastDebit = { invoice: invoice.id, line: line.id };
   }
@@ -264,11 +267,17 @@ export function attachInvoiceItem(account, invoice, ii) {
   if (ii.invoice === invoice.id) return invoice.lines.data.find((l) => (l.parent?.invoice_item_details ?? l.parent?.subscription_item_details)?.invoice_item === ii.id);
   if (ii.invoice || invoice.status !== 'draft' || ii.customer !== invoice.customer || ii.currency !== invoice.currency) throw invalidRequest('Invoice item cannot be attached to this invoice.', { param: 'invoice' });
   ii.invoice = invoice.id;
+  return addInvoiceItemLine(account, invoice, ii);
+}
+
+/** Appends the line of an invoice item without attaching it (`id`: the line ID, minted when omitted). */
+export function addInvoiceItemLine(account, invoice, ii, { id } = {}) {
   const price = account.store.get('price', ii.pricing?.price_details?.price);
   const sub = ii.parent?.subscription_details?.subscription ? account.store.get('subscription', ii.parent.subscription_details.subscription) : null;
   const itemId = ii.parent?.subscription_details?.subscription_item ?? null;
   if (ii.proration && itemId) {
     return addSubscriptionLine(account, invoice, {
+      id,
       subscription: sub,
       item: { id: itemId },
       price,
@@ -286,7 +295,7 @@ export function attachInvoiceItem(account, invoice, ii) {
     });
   }
   const line = {
-    id: account.mintId('il'),
+    id: id ?? account.mintId('il'),
     object: 'line_item',
     amount: ii.amount,
     currency: invoice.currency,

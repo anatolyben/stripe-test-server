@@ -71,6 +71,7 @@ export const RESPONSE_TYPES = {
   'POST /v1/checkout/sessions/{session}/expire': 'checkout.session',
   'POST /v1/customers': 'customer',
   'POST /v1/customers/{customer}': 'customer',
+  'POST /v1/invoices/create_preview': 'invoice',
   'POST /v1/invoices/{invoice}/finalize': 'invoice',
   'POST /v1/invoices/{invoice}/mark_uncollectible': 'invoice',
   'POST /v1/invoices/{invoice}/pay': 'invoice',

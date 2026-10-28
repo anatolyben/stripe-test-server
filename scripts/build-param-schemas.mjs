@@ -75,6 +75,7 @@ const EXTRA_OPERATIONS = [
   "DELETE /v1/invoiceitems/{invoiceitem}",
   "POST /v1/invoices",
   "POST /v1/invoices/{invoice}",
+  "POST /v1/invoices/create_preview",
   "DELETE /v1/invoices/{invoice}",
   "POST /v1/refunds",
   "GET /v1/refunds",
