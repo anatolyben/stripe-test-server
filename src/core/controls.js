@@ -83,12 +83,15 @@ export function install(app) {
         throw invalidRequest('Pass exactly one of seconds or to', { param: 'seconds' });
       }
       if (seconds !== undefined && seconds < 0) throw invalidRequest('seconds must be >= 0', { param: 'seconds' });
+      let now;
       try {
-        return { now: account.time.advanceAccountClock({ seconds, to }) };
+        now = account.time.advanceAccountClock({ seconds, to });
       } catch (err) {
         if (err instanceof RangeError) throw invalidRequest(err.message, { param: 'to' });
         throw err;
       }
+      account.server.registry.runHooks('account.advanced', account, now);
+      return { now };
     },
   });
 

@@ -17,6 +17,14 @@ Nothing here talks to Stripe, so tests need no Stripe account, API keys or netwo
 
 Not affiliated with, endorsed by, or sponsored by Stripe, Inc. Stripe is a trademark of Stripe, Inc.
 
+## New in 0.3.0
+
+- The `testClockPerCustomer` option (CLI `--test-clock-per-customer`, off by default) gives every
+  customer created without `test_clock` (by the API or Checkout) a real test clock of
+  its own at the account time. `advanceTime` advances those clocks to the new account time. Apps
+  that read the time from `subscription.test_clock` → `testClocks.retrieve(…).frozen_time` see the
+  time your test set, through the Stripe API alone. See [Time](#api).
+
 ## New in 0.2.0
 
 - `POST /v1/invoices/create_preview` (`stripe.invoices.createPreview`) previews an update of an
@@ -121,6 +129,7 @@ npx stripe-test-server --port 4242 \
 | `--api-version <v>`                     | Default API version of new accounts. Default `2026-08-26.dahlia`.                |
 | `--webhook-url <url>`, `--webhook-secret <s>` | A webhook endpoint for every account; the secret must follow its URL. Repeat the pair for more endpoints. |
 | `--log`                                 | One line per request, page and delivery; errors on stderr.                            |
+| `--test-clock-per-customer`             | The `testClockPerCustomer` option.                                               |
 | `-h`, `--help`                          | Usage.                                                                           |
 
 Flags that take a value also take the `--flag=value` form. It prints `stripe-test-server listening on <url>` and exits
@@ -139,6 +148,7 @@ that is not an integer from 0 to 65535, or an unpaired webhook flag exits 2 with
 | `billing: { retrySchedule?, afterFinalRetry?, markUncollectible? }` | What happens after a failed renewal. `retrySchedule`: days between retries (default `[2, 2, 2, 2, 2, 2, 2]`: 8 attempts within 14 days). `afterFinalRetry`: `"cancel"` (default), `"unpaid"` or `"past_due"`. `markUncollectible`: default `false`. Each account starts with a copy it can change. |
 | `webhookRetry: { delaysMs?, timeoutMs? }` | Delays before each retry of a failed delivery (default `[500, 2000, 5000]`) and how long to wait for an answer (default `10000`). |
 | `log`                                   | `true` prints one line per request, page and delivery attempt (method, path, status and request ID; event type, ID, URL and result); a function receives `{ level: 'info' \| 'error', message }` instead. |
+| `testClockPerCustomer`                  | `true` puts every customer created without `test_clock` on a test clock of its own, which `advanceTime` advances (see [Time](#api)). Default `false`. |
 
 An unknown option or a bad value throws a `TypeError`.
 
@@ -202,6 +212,20 @@ Everything due (trial ends, renewals, invoice finalization, payment retries, sch
 Checkout and portal session expiry) runs in order before each request and during
 `advanceTime`. Customers on a test clock live on that clock's frozen time instead, and move when
 the clock is advanced through the API.
+
+**Account time through the Stripe API** (`testClockPerCustomer: true`). The account clock itself
+is not visible through the Stripe API, as at Stripe, where only test clocks simulate time. With
+this option every customer created without `test_clock` (by `customers.create` or Checkout)
+gets a test clock of its own, frozen at the account time: the
+customer, its subscriptions, invoices and Checkout-created subscription report that `test_clock`,
+and `testClocks.retrieve(id).frozen_time` is their "now". `advanceTime` then advances each of these
+clocks still behind the new account time to it, as an API advance would (`advancing`, the due
+renewals, retries and trial ends, then `ready`), without the API's two-interval limit. Otherwise they
+are ordinary clocks: real seconds do not move them, the API can advance them (an advanced clock
+waits until the account time passes it), deleting one deletes its customer, a customer created
+with `test_clock` stays on that clock, and, as at Stripe, their objects are left out of unfiltered
+lists (`subscriptions.list()` and `invoices.list()` need `customer` or `test_clock`). One clock per
+customer keeps Stripe's limit of three customers per clock.
 
 **Billing.** Subscriptions follow Stripe's status machine (`incomplete`, `trialing`, `active`,
 `past_due`, `unpaid`, `canceled`, `incomplete_expired`, `paused`): upgrades and downgrades with

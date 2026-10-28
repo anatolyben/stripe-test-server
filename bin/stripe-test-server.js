@@ -4,7 +4,7 @@
  *
  *   stripe-test-server [--port N] [--host H] [--api-version V]
  *                      [--webhook-url U --webhook-secret S]...   (repeatable pairs)
- *                      [--log]
+ *                      [--log] [--test-clock-per-customer]
  */
 import { createStripeTestServer } from '../src/index.js';
 
@@ -17,6 +17,9 @@ Options:
   --webhook-url <url>    webhook endpoint for every account (repeatable)
   --webhook-secret <s>   signing secret (whsec_…) of the preceding --webhook-url
   --log                  print one line per request
+  --test-clock-per-customer
+                         put each customer created without test_clock on its own
+                         test clock, advanced by advance_time
   -h, --help             show this help
 `;
 
@@ -63,6 +66,10 @@ function parse(argv) {
       case '--log':
         noValue();
         opts.log = true;
+        break;
+      case '--test-clock-per-customer':
+        noValue();
+        opts.testClockPerCustomer = true;
         break;
       default:
         throw new Error(`Unknown option: ${arg}`);

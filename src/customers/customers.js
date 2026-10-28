@@ -117,7 +117,10 @@ function applyInvoiceSettings(customer, sent) {
  */
 export function createCustomer(account, params = {}, { request } = {}) {
   if (params.test_clock) checkTestClock(account, params.test_clock);
-  const domain = params.test_clock && account.time.clocks.has(params.test_clock) ? params.test_clock : null;
+  // Without test_clock, the 'customer.creating' hook may still choose one (testClockPerCustomer).
+  const placement = { testClock: params.test_clock ?? null };
+  if (!placement.testClock) account.server.registry.runHooks('customer.creating', account, placement, { request });
+  const domain = placement.testClock && account.time.clocks.has(placement.testClock) ? placement.testClock : null;
   const id = account.mintId('cus');
   const customer = {
     id,
@@ -143,7 +146,7 @@ export function createCustomer(account, params = {}, { request } = {}) {
     preferred_locales: [],
     shipping: null,
     tax_exempt: 'none',
-    test_clock: params.test_clock ?? null,
+    test_clock: placement.testClock,
     _deleted: false,
   };
   applyCommonFields(account, customer, params);

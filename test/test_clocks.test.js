@@ -93,3 +93,121 @@ describe('test clocks', () => {
     expect([gone.statusCode, gone.code]).toEqual([404, 'resource_missing']);
   });
 });
+
+describe('testClockPerCustomer', () => {
+  /** A monthly Pro price and a customer created without test_clock, paying with a Visa. */
+  async function payingCustomer(stripe, email = 'jenny.rosen@example.com') {
+    const product = await stripe.products.create({ name: 'Pro' });
+    const monthly = await stripe.prices.create({ product: product.id, unit_amount: 2000, currency: 'usd', recurring: { interval: 'month' } });
+    const customer = await stripe.customers.create({ email });
+    const pm = await stripe.paymentMethods.attach('pm_card_visa', { customer: customer.id });
+    await stripe.customers.update(customer.id, { invoice_settings: { default_payment_method: pm.id } });
+    return { monthly, customer };
+  }
+
+  it('is off by default: customers created without test_clock have none', async () => {
+    const t = await startServer();
+    const stripe = t.stripe();
+    expect((await stripe.customers.create({ email: 'a@example.com' })).test_clock).toBeNull();
+    expect((await stripe.testHelpers.testClocks.list()).data).toEqual([]);
+  });
+
+  it('gives each new customer its own clock at the account time, which its objects report', async () => {
+    const t = await startServer({ testClockPerCustomer: true });
+    const stripe = t.stripe();
+    const { now } = await t.account().now();
+    const { monthly, customer } = await payingCustomer(stripe);
+    const other = await stripe.customers.create({ email: 'other@example.com' });
+    expect(customer.test_clock).toMatch(/^clock_/);
+    expect(other.test_clock).toMatch(/^clock_/);
+    expect(other.test_clock).not.toBe(customer.test_clock);
+
+    const sub = await stripe.subscriptions.create({ customer: customer.id, items: [{ price: monthly.id }] });
+    const invoice = await stripe.invoices.retrieve(sub.latest_invoice);
+    expect([sub.test_clock, invoice.test_clock]).toEqual([customer.test_clock, customer.test_clock]);
+    // How an app reads "now" for an object: its test_clock's frozen_time.
+    const clock = await stripe.testHelpers.testClocks.retrieve(sub.test_clock);
+    expect(clock).toMatchObject({ object: 'test_helpers.test_clock', status: 'ready' });
+    expect(clock.frozen_time).toBeGreaterThanOrEqual(now);
+    expect(clock.frozen_time).toBeLessThan(now + 60);
+    expect(sub.created).toBe(clock.frozen_time);
+    // As at Stripe, objects on a test clock are left out of unfiltered lists.
+    expect((await stripe.subscriptions.list()).data).toEqual([]);
+    expect((await stripe.subscriptions.list({ customer: customer.id })).data.map((s) => s.id)).toEqual([sub.id]);
+  });
+
+  it('puts the customer a Checkout Session creates on its own clock', async () => {
+    const t = await startServer({ testClockPerCustomer: true });
+    const stripe = t.stripe();
+    const product = await stripe.products.create({ name: 'Pro' });
+    const price = await stripe.prices.create({ product: product.id, unit_amount: 2000, currency: 'usd', recurring: { interval: 'month' } });
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [{ price: price.id, quantity: 1 }],
+      customer_email: 'checkout@example.com',
+      success_url: 'https://example.com/success',
+      cancel_url: 'https://example.com/cancel',
+    });
+    const res = await fetch(session.url, {
+      method: 'POST',
+      body: new URLSearchParams({ card_number: '4242424242424242' }).toString(),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(303);
+    const done = await stripe.checkout.sessions.retrieve(session.id, { expand: ['subscription', 'customer'] });
+    expect(done.customer.test_clock).toMatch(/^clock_/);
+    expect(done.subscription).toMatchObject({ status: 'active', test_clock: done.customer.test_clock });
+  });
+
+  it('advanceTime advances every per-customer clock to the new account time, running what falls due', async () => {
+    const t = await startServer({ testClockPerCustomer: true });
+    const stripe = t.stripe();
+    const account = t.account();
+    const { monthly, customer } = await payingCustomer(stripe);
+    const second = await payingCustomer(stripe, 'second@example.com');
+    const sub = await stripe.subscriptions.create({ customer: customer.id, items: [{ price: monthly.id }] });
+    const before = (await allEvents(stripe)).length;
+
+    const periodEnd = sub.items.data[0].current_period_end;
+    const { now } = await account.advanceTime({ to: periodEnd + 2 * HOUR });
+    for (const c of [customer, second.customer]) {
+      expect(await stripe.testHelpers.testClocks.retrieve(c.test_clock)).toMatchObject({ status: 'ready', frozen_time: now, status_details: {} });
+    }
+    const renewed = await stripe.subscriptions.retrieve(sub.id, { expand: ['latest_invoice'] });
+    expect(renewed.latest_invoice).toMatchObject({ billing_reason: 'subscription_cycle', status: 'paid', test_clock: customer.test_clock });
+    expect(renewed.items.data[0].current_period_start).toBe(periodEnd);
+    const types = (await allEvents(stripe)).slice(before).map((e) => e.type);
+    expect(types.filter((x) => x === 'test_helpers.test_clock.advancing')).toHaveLength(2);
+    expect(types.indexOf('test_helpers.test_clock.advancing')).toBeLessThan(types.indexOf('invoice.created'));
+    expect(types.lastIndexOf('invoice.paid')).toBeLessThan(types.lastIndexOf('test_helpers.test_clock.ready'));
+  });
+
+  it('leaves explicit clocks to the test, and per-customer clocks stay ordinary clocks', async () => {
+    const t = await startServer({ testClockPerCustomer: true });
+    const stripe = t.stripe();
+    const account = t.account();
+    const own = await stripe.testHelpers.testClocks.create({ frozen_time: T0 });
+    const pinned = await stripe.customers.create({ email: 'pinned@example.com', test_clock: own.id });
+    expect(pinned.test_clock).toBe(own.id);
+    const auto = await stripe.customers.create({ email: 'auto@example.com' });
+    const autoClock = await stripe.testHelpers.testClocks.retrieve(auto.test_clock);
+
+    // Advanced through the API past the account time, a per-customer clock waits for it.
+    await stripe.testHelpers.testClocks.advance(auto.test_clock, { frozen_time: autoClock.frozen_time + 10 * DAY });
+    await account.advanceTime({ seconds: DAY });
+    expect((await stripe.testHelpers.testClocks.retrieve(auto.test_clock)).frozen_time).toBe(autoClock.frozen_time + 10 * DAY);
+    const { now } = await account.advanceTime({ seconds: 20 * DAY });
+    expect((await stripe.testHelpers.testClocks.retrieve(auto.test_clock)).frozen_time).toBe(now);
+    expect((await stripe.testHelpers.testClocks.retrieve(own.id)).frozen_time).toBe(T0);
+
+    // Deleting it deletes its customer; later advances skip it.
+    await stripe.testHelpers.testClocks.del(auto.test_clock);
+    expect(await stripe.customers.retrieve(auto.id)).toMatchObject({ deleted: true });
+    await account.advanceTime({ seconds: DAY });
+  });
+
+  it('rejects a non-boolean option', async () => {
+    await expect(startServer({ testClockPerCustomer: 'yes' })).rejects.toThrow(TypeError);
+  });
+});

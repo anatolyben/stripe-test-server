@@ -101,6 +101,8 @@ All run synchronously, in registration order, and must not await anything.
 | `account.created` | `(account)` | first request or control for a new key | — |
 | `account.beforeRequest` | `(account)` | before every API request, hosted page and locked control, after due jobs ran | test clocks: flip advanced clocks to `ready` |
 | `account.reset` | `(account)` | at the start of `account.reset()` | webhooks: drop queued deliveries and timers |
+| `customer.creating` | `(account, placement, { request })` | in `createCustomer` without `test_clock`, before the ID is minted; a listener may set `placement.testClock` | test clocks: a clock of the customer's own with `testClockPerCustomer` |
+| `account.advanced` | `(account, now)` | after the `advanceTime` control moved the account clock | test clocks: advance per-customer clocks to `now` |
 | `customer.deleting` | `(account, customer, { request })` | in `deleteCustomer`, before `customer.deleted` is emitted | payments: detach the customer's cards silently (installed first); billing: cancel the customer's live subscriptions |
 | `payment_method.detached` | `(account, pm, { customer, request })` | in `detachPaymentMethod`, after `payment_method.detached` (and the customer's `customer.updated` when the card was its default) | billing: clear `default_payment_method` on the customer's subscriptions that used the card |
 | `server.close` | `(server)` | at the start of `server.close()` | webhooks: clear timers |

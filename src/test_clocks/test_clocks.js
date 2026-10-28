@@ -11,6 +11,10 @@
  * status_details.advancing), then turns `ready` on the next tick or before the account's next
  * request, whichever comes first. Deleting a clock deletes its customers (which cancels their
  * subscriptions). Events: test_helpers.test_clock.created / .advancing / .ready / .deleted.
+ *
+ * With the testClockPerCustomer option, every customer created without `test_clock` (by the API
+ * or Checkout) gets a clock of its own, frozen at the account time; advanceTime then
+ * advances each of them to the new account time. They are ordinary clocks in every other way.
  */
 import { emitEvent } from '../core/events.js';
 import { invalidRequest, resourceMissing } from '../core/errors.js';
@@ -61,6 +65,41 @@ function markReady(account, clockId) {
   clock.status = 'ready';
   clock.status_details = {};
   emitEvent(account, 'test_helpers.test_clock.ready', clock, { request: null });
+}
+
+/** The per-customer clocks the testClockPerCustomer option created, in creation order. */
+function perCustomerClocks(account) {
+  return account.moduleState('test_clocks', () => ({ perCustomer: new Set() })).perCustomer;
+}
+
+/** 'customer.creating': a new clock at the account time for a customer created without one. */
+function placeOnOwnClock(account, placement, { request }) {
+  if (!account.server.options.testClockPerCustomer) return;
+  const clock = createClock(account, { frozenTime: account.time.now(null) }, { request });
+  perCustomerClocks(account).add(clock.id);
+  placement.testClock = clock.id;
+}
+
+/**
+ * 'account.advanced': moves every per-customer clock still behind the account time up to it, as an
+ * API advance would (advancing, the due transitions, ready), without the advance limit.
+ */
+function followAccountClock(account, now) {
+  const ids = perCustomerClocks(account);
+  for (const id of ids) {
+    const clock = account.store.get('test_helpers.test_clock', id);
+    if (!clock) {
+      ids.delete(id);
+      continue;
+    }
+    markReady(account, id);
+    if (clock.frozen_time >= now) continue;
+    clock.status = 'advancing';
+    clock.status_details = { advancing: { target_frozen_time: now } };
+    emitEvent(account, 'test_helpers.test_clock.advancing', clock, { request: null });
+    account.time.advance(id, now);
+    markReady(account, id);
+  }
 }
 
 /** POST /v1/test_helpers/test_clocks (optionally attaching an existing customer). */
@@ -189,6 +228,8 @@ export function renderClock(c) {
 /** Routes, serializer and the ready flip before requests. */
 export function install(app) {
   app.object('test_helpers.test_clock', { render: renderClock });
+  app.hook('customer.creating', placeOnOwnClock);
+  app.hook('account.advanced', followAccountClock);
 
   // An advanced clock is ready before the account's next request is handled.
   app.hook('account.beforeRequest', (account) => {

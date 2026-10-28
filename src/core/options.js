@@ -16,7 +16,7 @@ export const DEFAULT_BILLING_SETTINGS = Object.freeze({
 /** Default webhook retries: three, compressed for tests (Stripe retries sandbox deliveries three times). */
 export const DEFAULT_WEBHOOK_RETRY = Object.freeze({ delaysMs: [500, 2000, 5000], timeoutMs: 10000 });
 
-const OPTION_KEYS = ['port', 'host', 'webhooks', 'apiVersion', 'billing', 'webhookRetry', 'log'];
+const OPTION_KEYS = ['port', 'host', 'webhooks', 'apiVersion', 'billing', 'webhookRetry', 'log', 'testClockPerCustomer'];
 
 function fail(message) {
   throw new TypeError(`createStripeTestServer: ${message}`);
@@ -51,5 +51,7 @@ export function normalizeOptions(options = {}) {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) fail('webhookRetry.timeoutMs must be a number > 0');
   const log = options.log ?? false;
   if (typeof log !== 'boolean' && typeof log !== 'function') fail('log must be a boolean or a function');
-  return { port, host, webhooks, apiVersion, billing, webhookRetry: { delaysMs, timeoutMs }, log };
+  const testClockPerCustomer = options.testClockPerCustomer ?? false;
+  if (typeof testClockPerCustomer !== 'boolean') fail('testClockPerCustomer must be a boolean');
+  return { port, host, webhooks, apiVersion, billing, webhookRetry: { delaysMs, timeoutMs }, log, testClockPerCustomer };
 }

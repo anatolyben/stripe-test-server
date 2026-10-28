@@ -64,6 +64,12 @@ export interface StripeTestServerOptions {
   webhookRetry?: WebhookRetryOptions;
   /** true prints one line per request and delivery to the console; a function receives each line. */
   log?: boolean | ((entry: LogEntry) => void);
+  /**
+   * true gives every customer created without `test_clock` (by the API or Checkout) a
+   * test clock of its own at the account time, which `advanceTime` advances to the new account
+   * time. Its objects then report that `test_clock`, as they would at Stripe. Default false.
+   */
+  testClockPerCustomer?: boolean;
 }
 
 // Controls ------------------------------------------------------------------------------------------
