@@ -1,5 +1,108 @@
 # stripe-test-server
 
+**A local Stripe Billing server for end-to-end tests.**\
+Test your subscription code offline with the official `stripe` SDK: no Stripe account, no API keys, no network.
+
+[![npm](https://img.shields.io/npm/v/stripe-test-server)](https://www.npmjs.com/package/stripe-test-server)
+[![Dependencies: 0](https://img.shields.io/badge/dependencies-0-brightgreen)](https://github.com/anatolyben/stripe-test-server/blob/main/package.json)
+[![License: MIT](https://img.shields.io/npm/l/stripe-test-server)](https://github.com/anatolyben/stripe-test-server/blob/main/LICENSE)
+[![Node >= 20](https://img.shields.io/node/v/stripe-test-server)](https://github.com/anatolyben/stripe-test-server/blob/main/package.json)
+
+[Install](#install) · [Quick start](#quick-start) · [CLI](#cli) · [Reference](#overview)
+
+---
+
+## What you can test
+
+- **Subscriptions**: trials, upgrades and downgrades with proration, cancel at period end, pausing,
+  schedules, and Checkout in subscription mode with a hosted page your test can submit.
+- **Invoices and money**: renewals, invoice items, credit notes, refunds, failed payments with
+  retries, and failed refunds.
+- **Time**: an account clock and test clocks your test moves, so trials end, renewals charge and
+  subscriptions cancel when it passes.
+- **Webhooks**: signed like Stripe's, with retries, and sent late, twice, out of order or with a bad
+  signature on demand.
+- **Failures**: declined cards, API faults (500, 429, timeout) and idempotency.
+- **The customer portal** and invoice previews of a subscription update.
+
+It never talks to Stripe and runs as often as you like in CI.
+
+<details>
+<summary><b>All sections</b></summary>
+
+**Start:** [Install](#install) · [Quick start](#quick-start) · [Checkout quick start](#checkout-quick-start) · [CLI](#cli)
+
+**Guide:** [Options](#options) · [API](#api) · [Webhooks](#webhooks) · [Test actions](#test-actions) ·
+[Faults](#faults) · [Control API](#control-api) · [Isolation](#isolation) · [API version](#api-version)
+
+**Reference:** [Uncertain behaviour](#uncertain-behaviour) · [What it does not do](#what-it-does-not-do) ·
+[Fidelity gaps](#fidelity-gaps)
+
+**More:** [Development](#development) · [Status](#status)
+
+</details>
+
+## Install
+
+```sh
+npm install --save-dev stripe-test-server stripe
+```
+
+Requires Node.js 20 or newer. No runtime dependencies; `stripe` is your own client. Everything lives
+in memory and is gone when the server stops. Keep it on localhost.
+
+## Quick start
+
+A customer subscribes, a month passes on the test clock, and your webhook endpoint receives the signed events for the first invoice and the renewal:
+
+```js
+import http from 'node:http';
+import Stripe from 'stripe';
+import { createStripeTestServer } from 'stripe-test-server';
+
+// Your app's webhook endpoint: verify the signature, then handle the event.
+const receiver = http.createServer((req, res) => {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c)).on('end', () => {
+    const event = stripe.webhooks.constructEvent(Buffer.concat(chunks), req.headers['stripe-signature'], 'whsec_test');
+    if (event.type === 'invoice.paid') console.log('invoice.paid:', event.data.object.amount_paid / 100, 'USD');
+    res.end();
+  });
+});
+await new Promise((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+
+const server = await createStripeTestServer({
+  webhooks: [{ url: `http://127.0.0.1:${receiver.address().port}`, secret: 'whsec_test' }],
+});
+const stripe = new Stripe('sk_test_123', { host: '127.0.0.1', port: server.port, protocol: 'http' });
+
+const price = await stripe.prices.create({
+  currency: 'usd', unit_amount: 3000, recurring: { interval: 'month' }, product_data: { name: 'Pro' },
+});
+const customer = await stripe.customers.create({
+  email: 'customer@example.com', payment_method: 'pm_card_visa',
+  invoice_settings: { default_payment_method: 'pm_card_visa' },
+});
+const sub = await stripe.subscriptions.create({ customer: customer.id, items: [{ price: price.id }] });
+console.log('subscription:', sub.status); // active, first invoice paid
+
+await server.account('sk_test_123').advanceTime({ seconds: 31 * 86400 }); // a month passes: renewal
+await server.settle(); // wait until every webhook is delivered
+
+await server.close();
+receiver.close();
+```
+
+With `stripe` installed, save it as `quickstart.mjs` and run `node quickstart.mjs`. It prints:
+
+```
+subscription: active
+invoice.paid: 30 USD
+invoice.paid: 30 USD
+```
+
+## Overview
+
 `stripe-test-server` is a local test server for Stripe Billing. It keeps everything in memory, is
 deterministic (the same steps give the same IDs) and is driven by the official
 [`stripe`](https://www.npmjs.com/package/stripe) SDK: point the client at it with
@@ -58,16 +161,7 @@ Not affiliated with, endorsed by, or sponsored by Stripe, Inc. Stripe is a trade
 See [the Billing endpoints](#invoice-items-manual-invoices-credit-notes-and-refunds) for supported
 parameters and [Billing adjustments](#billing-adjustments) for rounding rules and fidelity limits.
 
-## Install
-
-```sh
-npm install --save-dev stripe-test-server stripe
-```
-
-Requires Node.js 20 or newer. No runtime dependencies; bring your own `stripe` client (tested with
-stripe-node 22.6.2).
-
-## Quick start
+## Checkout quick start
 
 ```js
 import Stripe from 'stripe';
@@ -87,7 +181,7 @@ const price = await stripe.prices.create({
 const session = await stripe.checkout.sessions.create({
   mode: 'subscription',
   line_items: [{ price: price.id, quantity: 1 }],
-  customer_email: 'jenny.rosen@example.com',
+  customer_email: 'customer@example.com',
   subscription_data: { trial_period_days: 14 },
   success_url: 'https://app.example.com/welcome?session_id={CHECKOUT_SESSION_ID}',
 });

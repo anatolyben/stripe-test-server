@@ -1,7 +1,7 @@
 {
   "name": "stripe-test-server",
   "version": "0.3.0",
-  "description": "A local test server for Stripe Billing: customers, prices, Checkout, subscriptions, schedules, invoices, invoice items, credit notes, refunds, the customer portal, test clocks and signed webhooks, for testing with the official stripe SDK",
+  "description": "A local Stripe Billing server for end-to-end tests: customers, subscriptions, Checkout, invoices, the customer portal, test clocks and signed webhooks. Works with the official stripe SDK. No Stripe account needed.",
   "license": "MIT",
   "author": "Anatoly Ben",
   "type": "module",
@@ -39,6 +39,7 @@
     "type": "git",
     "url": "git+https://github.com/anatolyben/stripe-test-server.git"
   },
+  "homepage": "https://github.com/anatolyben/stripe-test-server#readme",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit --strict src/index.d.ts"
